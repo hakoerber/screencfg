@@ -1,0 +1,12 @@
+[package]
+name = "screencfg"
+description = "Automatically configure your screen setup"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.4", default-features = false, features = ["std", "derive"] }
+
+[features]
+default = ["full"]
+full = ["clap/help", "clap/color", "clap/suggestions", "clap/usage", "clap/error-context"]
