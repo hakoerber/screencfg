@@ -5,6 +5,8 @@ use std::string;
 
 use clap::{Args, Parser, ValueEnum};
 
+mod i3;
+
 #[derive(Debug)]
 enum Error {
     Command(String),
@@ -12,6 +14,7 @@ enum Error {
     Workstation(String),
     Plan(String),
     Apply(String),
+    I3(i3::Error),
 }
 
 impl fmt::Display for Error {
@@ -25,8 +28,15 @@ impl fmt::Display for Error {
                 Error::Workstation(msg) => format!("workstation failed: {msg}"),
                 Error::Plan(msg) => format!("plan failed: {msg}"),
                 Error::Apply(msg) => format!("apply failed: {msg}"),
+                Error::I3(e) => format!("i3: {e}"),
             },
         )
+    }
+}
+
+impl From<i3::Error> for Error {
+    fn from(value: i3::Error) -> Self {
+        Self::I3(value)
     }
 }
 
@@ -430,7 +440,37 @@ struct Cli {
     diagram: bool,
 }
 
+#[allow(unreachable_code)]
 fn run() -> Result<(), Error> {
+    let mut i3_connection = i3::connect()?;
+
+    let version = i3_connection.version()?;
+
+    println!("i3 version: {version}");
+
+    let workspaces = i3_connection.workspaces()?;
+
+    println!("i3 workspaces:");
+    for workspace in workspaces {
+        println!("- {workspace}");
+    }
+
+    i3_connection.command(i3::Command::Nop)?;
+
+    let outputs = i3_connection.outputs()?;
+
+    println!("i3 outputs:");
+    for output in outputs.iter() {
+        println!("- {output}")
+    }
+
+    // i3_connection.command(i3::Command::MoveWorkspace {
+    //     id: 3,
+    //     output: outputs[0],
+    // })?;
+
+    return Ok(());
+
     let args = Cli::parse();
 
     let monitors = Monitor::findall()?;
