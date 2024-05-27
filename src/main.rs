@@ -6,15 +6,18 @@ use std::string;
 use clap::{Args, Parser, ValueEnum};
 
 mod i3;
+use i3::Conn;
 
 #[derive(Debug)]
 enum Error {
+    Generic(String),
     Command(String),
     Classify(String),
     Workstation(String),
     Plan(String),
     Apply(String),
     I3(i3::Error),
+    InvalidSetup(String),
 }
 
 impl fmt::Display for Error {
@@ -23,12 +26,14 @@ impl fmt::Display for Error {
             f,
             "{}",
             match self {
+                Error::Generic(msg) => format!("error: {msg}"),
                 Error::Command(msg) => format!("command failed: {msg}"),
                 Error::Classify(msg) => format!("classification failed: {msg}"),
                 Error::Workstation(msg) => format!("workstation failed: {msg}"),
                 Error::Plan(msg) => format!("plan failed: {msg}"),
                 Error::Apply(msg) => format!("apply failed: {msg}"),
                 Error::I3(e) => format!("i3: {e}"),
+                Error::InvalidSetup(msg) => format!("invalid setup: {msg}"),
             },
         )
     }
@@ -55,64 +60,63 @@ impl From<string::FromUtf8Error> for Error {
 impl std::error::Error for Error {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum MonitorClass {
+enum OutputClass {
     Laptop,
     External,
 }
 
-impl TryFrom<&str> for MonitorClass {
-    type Error = Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
+impl OutputClass {
+    fn try_detect(value: &str) -> Result<Self, Error> {
         if value.starts_with("eDP-") {
             Ok(Self::Laptop)
         } else if value.starts_with("DP-") || value.starts_with("HDMI-") {
             Ok(Self::External)
         } else {
             Err(Error::Classify(format!(
-                "could not classify monitor: {value}"
+                "could not classify output: {value}"
             )))
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Monitor {
+struct Output {
+    class: OutputClass,
     name: String,
-    class: MonitorClass,
 }
 
-impl Monitor {
-    fn on(self) -> MonitorSetting {
-        MonitorSetting {
-            monitor: self,
-            state: MonitorState::On,
+impl Output {
+    fn on(self) -> OutputSetting {
+        OutputSetting {
+            output: self,
+            state: OutputState::On,
         }
     }
 
-    fn off(self) -> MonitorSetting {
-        MonitorSetting {
-            monitor: self,
-            state: MonitorState::Off,
+    fn off(self) -> OutputSetting {
+        OutputSetting {
+            output: self,
+            state: OutputState::Off,
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 struct Workstation {
-    laptop: Option<Monitor>,
-    externals: Option<(Monitor, Vec<Monitor>)>,
+    laptop: Option<Output>,
+    externals: Option<(Output, Vec<Output>)>,
 }
 
-impl TryFrom<Vec<Monitor>> for Workstation {
+impl TryFrom<&[Output]> for Workstation {
     type Error = Error;
 
-    fn try_from(mut value: Vec<Monitor>) -> Result<Self, Self::Error> {
-        value.sort();
+    fn try_from(value: &[Output]) -> Result<Self, Self::Error> {
+        let (mut laptops, mut non_laptops): (Vec<_>, Vec<_>) = value
+            .iter()
+            .cloned()
+            .partition(|output| output.class == OutputClass::Laptop);
 
-        let (mut laptops, non_laptops): (Vec<_>, Vec<_>) = value
-            .into_iter()
-            .partition(|monitor| monitor.class == MonitorClass::Laptop);
+        non_laptops.sort();
 
         let laptop = match laptops.len() {
             0 => None,
@@ -126,7 +130,7 @@ impl TryFrom<Vec<Monitor>> for Workstation {
 
         let (mut externals, rest): (Vec<_>, Vec<_>) = non_laptops
             .into_iter()
-            .partition(|monitor| monitor.class == MonitorClass::External);
+            .partition(|output| output.class == OutputClass::External);
 
         if laptop.is_none() && externals.is_empty() {
             return Err(Error::Workstation("no screens found".to_string()));
@@ -143,80 +147,167 @@ impl TryFrom<Vec<Monitor>> for Workstation {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum MonitorState {
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum OutputState {
     On,
     Off,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct MonitorSetting {
-    monitor: Monitor,
-    state: MonitorState,
+struct OutputSetting {
+    output: Output,
+    state: OutputState,
+}
+
+#[derive(Debug)]
+struct Workspaces(Vec<Workspace>);
+
+impl Workspaces {
+    fn convert(workspaces: i3::Workspaces, outputs: &[Output]) -> Result<Self, Error> {
+        Ok(Self(
+            workspaces
+                .into_iter()
+                .map(|from| {
+                    Ok(Workspace {
+                        num: from.num,
+                        name: from.name,
+                        output: outputs
+                            .iter()
+                            .find(|output| from.output == output.name)
+                            .ok_or_else(|| {
+                                Error::Generic(format!(
+                                    "output of workspace {} ({}) not found in i3 outputs",
+                                    from.num, from.output
+                                ))
+                            })?
+                            .clone(),
+                    })
+                })
+                .collect::<Result<Vec<Workspace>, Error>>()?,
+        ))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Workspace {
+    pub num: usize,
+    #[allow(dead_code)]
+    pub name: String,
+    pub output: Output,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct WorkspaceSetting {
+    workspace: Workspace,
+    output: Output,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 struct Plan {
-    monitors: Vec<MonitorSetting>,
+    output_settings: Vec<OutputSetting>,
+    workspace_settings: Vec<WorkspaceSetting>,
+}
+
+#[derive(Debug)]
+enum Command {
+    Xrandr(String, Vec<String>),
+    MoveWorkspace { num: usize, output: Output },
+}
+
+impl fmt::Display for Command {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Command::Xrandr(program, args) => write!(f, "{} {}", program, args.join(" ")),
+            Command::MoveWorkspace { num, output } => {
+                write!(f, "move workspace {num} to {}", output.name)
+            }
+        }
+    }
 }
 
 impl Plan {
-    fn command(&self) -> (String, Vec<String>) {
+    fn commands(&self) -> Vec<Command> {
+        let mut commands = vec![];
         let mut args = vec![];
 
-        let mut left: Option<&MonitorSetting> = None;
+        let mut left: Option<&OutputSetting> = None;
 
-        for monitor in &self.monitors {
+        for setting in &self.output_settings {
             args.push("--output".into());
-            args.push(monitor.monitor.name.clone());
+            args.push(setting.output.name.clone());
 
-            match monitor.state {
-                MonitorState::On => {
+            match setting.state {
+                OutputState::On => {
                     args.push("--auto".into());
                     if let Some(left) = left {
                         args.push("--right-of".into());
-                        args.push(left.monitor.name.clone());
+                        args.push(left.output.name.clone());
                     }
-                    left = Some(monitor);
+                    left = Some(setting);
                 }
-                MonitorState::Off => args.push("--off".into()),
+                OutputState::Off => args.push("--off".into()),
             };
         }
 
-        ("xrandr".into(), args)
+        commands.push(Command::Xrandr("xrandr".into(), args));
+
+        for setting in &self.workspace_settings {
+            let from = &setting.workspace.output;
+            let to = &setting.workspace.output;
+
+            assert_ne!(from, to);
+
+            commands.push(Command::MoveWorkspace {
+                num: setting.workspace.num,
+                output: to.clone(),
+            });
+        }
+
+        commands
     }
 
-    fn apply(self) -> Result<(String, Vec<String>), Error> {
-        let (program, args) = self.command();
-        let output = process::Command::new(&program).args(&args).output()?;
+    fn apply(self, i3: &mut i3::Connection) -> Result<Vec<Command>, Error> {
+        let commands = self.commands();
+        for command in &commands {
+            match command {
+                Command::Xrandr(program, args) => {
+                    let output = process::Command::new(program).args(args).output()?;
 
-        let _ = output
-            .status
-            .success()
-            .then_some(())
-            .ok_or(Error::Apply(String::from_utf8(output.stderr)?));
-
-        Ok((program, args))
+                    let _ = output
+                        .status
+                        .success()
+                        .then_some(())
+                        .ok_or(Error::Apply(String::from_utf8(output.stderr)?));
+                }
+                Command::MoveWorkspace { num, output } => {
+                    i3.command(i3::Command::MoveWorkspace {
+                        id: *num,
+                        output: output.name.clone(),
+                    })?;
+                }
+            }
+        }
+        Ok(commands)
     }
 }
 
 impl fmt::Display for Plan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let active_monitors = self
-            .monitors
+        let active_outputs = self
+            .output_settings
             .iter()
-            .filter(|monitor| monitor.state == MonitorState::On)
+            .filter(|setting| setting.state == OutputState::On)
             .collect::<Vec<_>>();
 
-        let padding_top = active_monitors
+        let padding_top = active_outputs
             .iter()
-            .map(|monitor| "─".repeat(monitor.monitor.name.len()))
+            .map(|setting| "─".repeat(setting.output.name.len()))
             .collect::<Vec<_>>()
             .join("─┬─");
 
-        let padding_bottom = active_monitors
+        let padding_bottom = active_outputs
             .iter()
-            .map(|monitor| "─".repeat(monitor.monitor.name.len()))
+            .map(|setting| "─".repeat(setting.output.name.len()))
             .collect::<Vec<_>>()
             .join("─┴─");
 
@@ -228,9 +319,9 @@ impl fmt::Display for Plan {
         writeln!(
             f,
             "┆ │ {} │ ┆",
-            active_monitors
+            active_outputs
                 .into_iter()
-                .map(|monitor| monitor.monitor.name.clone())
+                .map(|setting| setting.output.name.clone())
                 .collect::<Vec<_>>()
                 .join(" │ ")
         )?;
@@ -244,167 +335,197 @@ impl fmt::Display for Plan {
 }
 
 impl Workstation {
-    fn plan(&self, setup: Setup) -> Result<Plan, Error> {
-        match setup {
-            Setup::LaptopLeft => match self.laptop {
-                None => Err(Error::Plan("no laptop screen found".to_string())),
-                Some(ref laptop) => Ok(Plan {
-                    monitors: {
-                        let mut v = vec![laptop.clone().on()];
-                        v.append({
-                            &mut match &self.externals {
-                                None => {
-                                    return Err(Error::Plan(
-                                        "no external screens found".to_string(),
-                                    ))
-                                }
-                                Some((ext, rest)) => {
-                                    let mut v = vec![ext.clone().on()];
-                                    v.append(
-                                        &mut rest.iter().map(|ext| ext.clone().on()).collect(),
-                                    );
-                                    v
-                                }
-                            }
-                        });
-                        v
-                    },
-                }),
+    fn all_on_laptop(
+        workspaces: &Workspaces,
+        laptop: &Output,
+        externals: Option<(Output, Vec<Output>)>,
+    ) -> Plan {
+        Plan {
+            output_settings: {
+                let mut v = vec![laptop.clone().on()];
+                v.append({
+                    &mut match externals {
+                        None => vec![],
+                        Some((ext, rest)) => {
+                            let mut v = vec![ext.clone().off()];
+                            v.append(&mut rest.iter().map(|ext| ext.clone().off()).collect());
+                            v
+                        }
+                    }
+                });
+                v
             },
-            Setup::LaptopRight => match self.laptop {
-                None => Err(Error::Plan("no laptop screen found".to_string())),
-                Some(ref laptop) => Ok(Plan {
-                    monitors: {
-                        let mut v = match &self.externals {
-                            None => {
-                                return Err(Error::Plan("no external screens found".to_string()))
+            workspace_settings: workspaces
+                .0
+                .iter()
+                .filter(|workspace| (workspace.output != *laptop))
+                .map(|workspace| WorkspaceSetting {
+                    workspace: workspace.clone(),
+                    output: laptop.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    fn all_on_external(
+        workspaces: &Workspaces,
+        laptop: Option<Output>,
+        externals: &(Output, Vec<Output>),
+    ) -> Result<Plan, Error> {
+        Ok(Plan {
+            output_settings: {
+                let mut v = {
+                    let mut v = vec![externals.0.clone().on()];
+                    v.append(
+                        &mut externals
+                            .1
+                            .iter()
+                            .map(|output| output.clone().on())
+                            .collect(),
+                    );
+                    v
+                };
+                if let Some(laptop) = laptop {
+                    v.push(laptop.clone().off());
+                }
+                v
+            },
+            workspace_settings: {
+                let mut v = vec![];
+                for workspace in &workspaces.0 {
+                    let target_output = match workspace.num {
+                        1..=5 => externals.0.clone(),
+                        6..=10 => match externals.1.len() {
+                            0 => externals.0.clone(),
+                            1 => externals.1.first().unwrap().clone(),
+                            _ => {
+                                return Err(Error::InvalidSetup(
+                                    "more than 2 external monitors not supported".into(),
+                                ))
                             }
-                            Some((ext, rest)) => {
-                                let mut v = vec![ext.clone().on()];
-                                v.append(&mut rest.iter().map(|ext| ext.clone().on()).collect());
-                                v
-                            }
-                        };
-                        v.push(laptop.clone().on());
-                        v
+                        },
+                        _ => {
+                            return Err(Error::InvalidSetup(
+                                "only workspaces between 1 and 10 are supported".into(),
+                            ))
+                        }
+                    };
+                    if workspace.output != target_output {
+                        v.push(WorkspaceSetting {
+                            workspace: workspace.clone(),
+                            output: target_output.clone(),
+                        });
+                    }
+                }
+                v
+            },
+        })
+    }
+
+    fn distribute_workspaces(
+        workspaces: &Workspaces,
+        laptop: &Output,
+        externals: &(Output, Vec<Output>),
+    ) -> Result<Vec<WorkspaceSetting>, Error> {
+        let mut v = vec![];
+        for workspace in &workspaces.0 {
+            let target_output = match workspace.num {
+                7..=10 => laptop.clone(),
+                i @ 1..=6 => match externals.1.len() {
+                    0 => externals.0.clone(),
+                    1 => match i {
+                        1..=3 => externals.0.clone(),
+                        4..=6 => externals.1.first().unwrap().clone(),
+                        _ => unreachable!(),
                     },
-                }),
+                    _ => {
+                        return Err(Error::InvalidSetup(
+                            "more than 2 external monitors not supported".into(),
+                        ))
+                    }
+                },
+                _ => {
+                    return Err(Error::InvalidSetup(
+                        "only workspaces between 1 and 10 are supported".into(),
+                    ))
+                }
+            };
+            if workspace.output != target_output {
+                v.push(WorkspaceSetting {
+                    workspace: workspace.clone(),
+                    output: target_output,
+                });
+            }
+        }
+        Ok(v)
+    }
+
+    fn plan(&self, setup: Setup, workspaces: &Workspaces) -> Result<Plan, Error> {
+        match setup {
+            setup @ (Setup::LaptopLeft | Setup::LaptopRight) => match self.laptop {
+                None => Err(Error::Plan("no laptop screen found".to_string())),
+                Some(ref laptop) => {
+                    let Some(ref externals) = self.externals else {
+                        return Err(Error::Plan("no external screens found".to_string()));
+                    };
+                    let workspace_settings =
+                        Self::distribute_workspaces(workspaces, laptop, externals)?;
+
+                    let mut output_settings = vec![externals.0.clone().on()];
+                    output_settings
+                        .append(&mut externals.1.iter().map(|ext| ext.clone().on()).collect());
+
+                    match setup {
+                        Setup::LaptopLeft => output_settings.insert(0, laptop.clone().on()),
+                        Setup::LaptopRight => output_settings.push(laptop.clone().on()),
+                        _ => unreachable!(),
+                    }
+
+                    Ok(Plan {
+                        output_settings,
+                        workspace_settings,
+                    })
+                }
             },
             Setup::LaptopOnly => match self.laptop {
                 None => Err(Error::Plan("no laptop screen found".to_string())),
-                Some(ref laptop) => Ok(Plan {
-                    monitors: {
-                        let mut v = vec![laptop.clone().on()];
-                        v.append({
-                            &mut match &self.externals {
-                                None => vec![],
-                                Some((ext, rest)) => {
-                                    let mut v = vec![ext.clone().off()];
-                                    v.append(
-                                        &mut rest.iter().map(|ext| ext.clone().off()).collect(),
-                                    );
-                                    v
-                                }
-                            }
-                        });
-                        v
-                    },
-                }),
+                Some(ref laptop) => Ok(Self::all_on_laptop(
+                    workspaces,
+                    laptop,
+                    self.externals.clone(),
+                )),
             },
             Setup::ExternalOnly => match &self.externals {
                 None => Err(Error::Plan("no external screens found".to_string())),
-                Some((ext, rest)) => Ok(Plan {
-                    monitors: {
-                        let mut v = {
-                            let mut v = vec![ext.clone().on()];
-                            v.append(
-                                &mut rest.iter().map(|monitor| monitor.clone().on()).collect(),
-                            );
-                            v
-                        };
-                        if let Some(laptop) = &self.laptop {
-                            v.push(laptop.clone().off());
-                        }
-                        v
-                    },
-                }),
+                Some(externals) => Ok(Self::all_on_external(
+                    workspaces,
+                    self.laptop.clone(),
+                    externals,
+                )?),
             },
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum OutputState {
-    Connected,
-    Disconnected,
+impl Output {
+    fn findall(i3: &mut i3::Connection) -> Result<Vec<Self>, Error> {
+        i3.outputs()?
+            .into_iter()
+            .filter(|output| output.active)
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<Output>, Error>>()
+    }
 }
 
-impl TryFrom<&str> for OutputState {
+impl TryFrom<i3::Output> for Output {
     type Error = Error;
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "connected" => Ok(Self::Connected),
-            "disconnected" => Ok(Self::Disconnected),
-            _ => Err(Error::Command(format!(
-                "unknown xrandr output state: {value}"
-            ))),
-        }
-    }
-}
+    fn try_from(value: i3::Output) -> Result<Self, Self::Error> {
+        let class = OutputClass::try_detect(&value.name)?;
 
-struct Output {
-    name: String,
-    state: OutputState,
-}
-
-impl Monitor {
-    fn new(name: &str) -> Result<Self, Error> {
         Ok(Self {
-            name: name.into(),
-            class: name.try_into()?,
-        })
-    }
-
-    fn findall() -> Result<Vec<Self>, Error> {
-        String::from_utf8(
-            process::Command::new("xrandr")
-                .arg("--query")
-                .output()?
-                .stdout,
-        )?
-        .lines()
-        .skip(1) // skip header
-        .filter(|line| {
-            if let Some(c) = line.chars().next() {
-                c.is_alphabetic()
-            } else {
-                false
-            }
-        })
-        .map(|line| {
-            let mut parts = line.split_whitespace();
-            match (parts.next(), parts.next()) {
-                (Some(part_1), Some(part_2)) => Ok(Output {
-                    name: part_1.to_string(),
-                    state: part_2.try_into()?,
-                }),
-                _ => Err(Error::Command(format!(
-                    "not enough output information in line: {line}"
-                ))),
-            }
-        })
-        .filter(|result| {
-            result
-                .as_ref()
-                .map(|output| output.state == OutputState::Connected)
-                .unwrap_or(true)
-        })
-        .flat_map(|result| result.map(|output| Self::new(&output.name)))
-        .collect::<Result<Vec<Monitor>, Error>>()
-        .map(|mut monitors| {
-            monitors.sort();
-            monitors
+            name: value.name,
+            class,
         })
     }
 }
@@ -438,65 +559,71 @@ struct Cli {
 
     #[arg(long)]
     diagram: bool,
+
+    #[arg(long)]
+    debug: bool,
 }
 
 #[allow(unreachable_code)]
 fn run() -> Result<(), Error> {
+    let args = Cli::parse();
+
     let mut i3_connection = i3::connect()?;
 
-    let version = i3_connection.version()?;
+    let outputs = Output::findall(&mut i3_connection)?;
 
-    println!("i3 version: {version}");
+    if args.debug {
+        println!("i3 outputs:");
+        for output in &outputs {
+            println!("  - {output:?}");
+        }
+        println!();
+    }
+
+    let workstation: Workstation = (&outputs[..]).try_into()?;
 
     let workspaces = i3_connection.workspaces()?;
+    let workspaces = Workspaces::convert(workspaces, &outputs)?;
 
-    println!("i3 workspaces:");
-    for workspace in workspaces {
-        println!("- {workspace}");
+    if args.debug {
+        println!("i3 workspaces:");
+        for workspace in &workspaces.0 {
+            println!("  - {workspace:?}");
+        }
+        println!();
     }
 
     i3_connection.command(i3::Command::Nop)?;
 
-    let outputs = i3_connection.outputs()?;
-
-    println!("i3 outputs:");
-    for output in outputs.iter() {
-        println!("- {output}")
-    }
-
-    // i3_connection.command(i3::Command::MoveWorkspace {
-    //     id: 3,
-    //     output: outputs[0],
-    // })?;
-
-    return Ok(());
-
-    let args = Cli::parse();
-
-    let monitors = Monitor::findall()?;
-    let workstation: Workstation = monitors.try_into()?;
-
     let plan = if let Some(setup) = args.approach.setup {
-        workstation.plan(setup)?
+        workstation.plan(setup, &workspaces)?
     } else {
         workstation
-            .plan(Setup::LaptopLeft)
-            .or_else(|_| workstation.plan(Setup::LaptopOnly))
-            .or_else(|_| workstation.plan(Setup::ExternalOnly))
+            .plan(Setup::LaptopLeft, &workspaces)
+            .or_else(|_| workstation.plan(Setup::LaptopOnly, &workspaces))
+            .or_else(|_| workstation.plan(Setup::ExternalOnly, &workspaces))
             .map_err(|_| Error::Plan("no plan fit with \"best\" strategy".to_string()))?
     };
 
+    if args.debug {
+        println!("{plan:?}");
+        println!();
+    }
     if args.diagram {
         println!("{plan}");
+        println!();
     }
 
-    let command = if args.dry_run {
-        plan.command()
+    let commands = if args.dry_run {
+        plan.commands()
     } else {
-        plan.apply()?
+        plan.apply(&mut i3_connection)?
     };
 
-    println!("{} {}", command.0, command.1.join(" "));
+    println!("applying changes:");
+    for command in commands {
+        println!("- {command}");
+    }
 
     Ok(())
 }
@@ -522,19 +649,26 @@ mod tests {
 
     #[test]
     fn single_laptop() -> Result<(), Error> {
-        let laptop = Monitor {
-            name: "eDP-1".to_string(),
-            class: MonitorClass::Laptop,
+        let mut connection = i3::MockConnection {
+            fail: false,
+            setting: i3::MockSetting::LaptopOnly,
         };
 
-        let monitors = vec![laptop.clone()];
+        let mut outputs = connection
+            .outputs()?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<Output>, Error>>()?;
+        outputs.sort();
 
-        let workstation: Workstation = monitors.try_into()?;
+        let workspaces = Workspaces::convert(connection.workspaces()?, &outputs)?;
+
+        let workstation: Workstation = outputs[..].try_into()?;
 
         assert_eq!(
             &workstation,
             &Workstation {
-                laptop: Some(laptop.clone()),
+                laptop: Some(outputs[0].clone()),
                 externals: None
             }
         );
@@ -546,19 +680,32 @@ mod tests {
                 Setup::LaptopOnly,
                 PlanExpect::Valid(
                     Plan {
-                        monitors: vec![laptop.on()],
+                        output_settings: vec![outputs[0].clone().on()],
+                        workspace_settings: vec![],
                     },
                     "--output eDP-1 --auto",
                 ),
             ),
             (Setup::ExternalOnly, PlanExpect::Error),
         ] {
-            let result = workstation.plan(setup);
+            let result = workstation.plan(setup, &workspaces);
             match expect {
                 PlanExpect::Error => assert!(result.is_err()),
                 PlanExpect::Valid(plan, cmd) => {
                     assert_eq!(result?, plan);
-                    assert_eq!(plan.command().1.join(" "), cmd);
+                    assert_eq!(
+                        plan.commands()
+                            .into_iter()
+                            .filter_map(|cmd| {
+                                match cmd {
+                                    Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                    Command::MoveWorkspace { .. } => None,
+                                }
+                            })
+                            .next()
+                            .unwrap(),
+                        cmd
+                    );
                 }
             }
         }
@@ -568,19 +715,19 @@ mod tests {
 
     #[test]
     fn multiple_laptops() -> Result<(), Error> {
-        let laptop1 = Monitor {
+        let laptop1 = Output {
             name: "eDP-1".to_string(),
-            class: MonitorClass::Laptop,
+            class: OutputClass::Laptop,
         };
 
-        let laptop2 = Monitor {
+        let laptop2 = Output {
             name: "eDP-2".to_string(),
-            class: MonitorClass::Laptop,
+            class: OutputClass::Laptop,
         };
 
-        let monitors = vec![laptop1, laptop2];
+        let outputs = vec![laptop1, laptop2];
 
-        let workstation: Result<Workstation, Error> = monitors.try_into();
+        let workstation: Result<Workstation, Error> = outputs[..].try_into();
 
         assert!(workstation.is_err());
 
@@ -589,9 +736,9 @@ mod tests {
 
     #[test]
     fn no_screens() -> Result<(), Error> {
-        let monitors = vec![];
+        let outputs = vec![];
 
-        let workstation: Result<Workstation, Error> = monitors.try_into();
+        let workstation: Result<Workstation, Error> = outputs[..].try_into();
 
         assert!(workstation.is_err());
 
@@ -600,20 +747,27 @@ mod tests {
 
     #[test]
     fn single_external() -> Result<(), Error> {
-        let external = Monitor {
-            name: "DP-1".to_string(),
-            class: MonitorClass::External,
+        let mut connection = i3::MockConnection {
+            fail: false,
+            setting: i3::MockSetting::ExternalOnly(1),
         };
 
-        let monitors = vec![external.clone()];
+        let mut outputs = connection
+            .outputs()?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<Output>, Error>>()?;
+        outputs.sort();
 
-        let workstation: Workstation = monitors.try_into()?;
+        let workspaces = Workspaces::convert(connection.workspaces()?, &outputs)?;
+
+        let workstation: Workstation = outputs[..].try_into()?;
 
         assert_eq!(
             workstation,
             Workstation {
                 laptop: None,
-                externals: Some((external.clone(), vec![]))
+                externals: Some((outputs[0].clone(), vec![]))
             }
         );
 
@@ -625,18 +779,31 @@ mod tests {
                 Setup::ExternalOnly,
                 PlanExpect::Valid(
                     Plan {
-                        monitors: vec![external.on()],
+                        output_settings: vec![outputs[0].clone().on()],
+                        workspace_settings: vec![],
                     },
                     "--output DP-1 --auto",
                 ),
             ),
         ] {
-            let result = workstation.plan(setup);
+            let result = workstation.plan(setup, &workspaces);
             match expect {
                 PlanExpect::Error => assert!(result.is_err()),
                 PlanExpect::Valid(plan, cmd) => {
-                    assert_eq!(result?, plan);
-                    assert_eq!(plan.command().1.join(" "), cmd);
+                    assert_eq!(result?.output_settings, plan.output_settings);
+                    assert_eq!(
+                        plan.commands()
+                            .into_iter()
+                            .filter_map(|cmd| {
+                                match cmd {
+                                    Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                    Command::MoveWorkspace { .. } => None,
+                                }
+                            })
+                            .next()
+                            .unwrap(),
+                        cmd
+                    );
                 }
             }
         }
@@ -646,31 +813,27 @@ mod tests {
 
     #[test]
     fn multiple_external() -> Result<(), Error> {
-        let external1 = Monitor {
-            name: "DP-1".to_string(),
-            class: MonitorClass::External,
-        };
-        let external2 = Monitor {
-            name: "DP-2".to_string(),
-            class: MonitorClass::External,
-        };
-        let external3 = Monitor {
-            name: "DP-3".to_string(),
-            class: MonitorClass::External,
+        let mut connection = i3::MockConnection {
+            fail: false,
+            setting: i3::MockSetting::ExternalOnly(2),
         };
 
-        let monitors = vec![external2.clone(), external3.clone(), external1.clone()];
+        let mut outputs = connection
+            .outputs()?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<Output>, Error>>()?;
+        outputs.sort();
 
-        let workstation: Workstation = monitors.try_into()?;
+        let workspaces = Workspaces::convert(connection.workspaces()?, &outputs)?;
+
+        let workstation: Workstation = outputs[..].try_into()?;
 
         assert_eq!(
             workstation,
             Workstation {
                 laptop: None,
-                externals: Some((
-                    external1.clone(),
-                    vec![external2.clone(), external3.clone()]
-                ))
+                externals: Some((outputs[0].clone(), vec![outputs[1].clone()]))
             }
         );
 
@@ -682,22 +845,31 @@ mod tests {
                 Setup::ExternalOnly,
                 PlanExpect::Valid(
                     Plan {
-                        monitors: vec![
-                            external1.clone().on(),
-                            external2.clone().on(),
-                            external3.on(),
-                        ],
+                        output_settings: vec![outputs[0].clone().on(), outputs[1].clone().on()],
+                        workspace_settings: vec![],
                     },
-                    "--output DP-1 --auto --output DP-2 --auto --right-of DP-1 --output DP-3 --auto --right-of DP-2",
+                    "--output DP-1 --auto --output DP-2 --auto --right-of DP-1",
                 ),
             ),
         ] {
-            let result = workstation.plan(setup);
+            let result = workstation.plan(setup, &workspaces);
             match expect {
                 PlanExpect::Error => assert!(result.is_err()),
                 PlanExpect::Valid(plan, cmd) => {
-                    assert_eq!(result?, plan);
-                    assert_eq!(plan.command().1.join(" "), cmd);
+                    assert_eq!(result?.output_settings, plan.output_settings);
+                    assert_eq!(
+                        plan.commands()
+                            .into_iter()
+                            .filter_map(|cmd| {
+                                match cmd {
+                                    Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                    Command::MoveWorkspace { .. } => None,
+                                }
+                            })
+                            .next()
+                            .unwrap(),
+                        cmd
+                    );
                 }
             }
         }
@@ -707,30 +879,27 @@ mod tests {
 
     #[test]
     fn mixture() -> Result<(), Error> {
-        let external1 = Monitor {
-            name: "DP-1".to_string(),
-            class: MonitorClass::External,
+        let mut connection = i3::MockConnection {
+            fail: false,
+            setting: i3::MockSetting::Mixed,
         };
 
-        let external2 = Monitor {
-            name: "DP-2".to_string(),
-            class: MonitorClass::External,
-        };
+        let mut outputs = connection
+            .outputs()?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<Output>, Error>>()?;
+        outputs.sort();
 
-        let laptop = Monitor {
-            name: "eDP-1".to_string(),
-            class: MonitorClass::Laptop,
-        };
+        let workspaces = Workspaces::convert(connection.workspaces()?, &outputs)?;
 
-        let monitors = vec![external2.clone(), laptop.clone(), external1.clone()];
-
-        let workstation: Workstation = monitors.try_into()?;
+        let workstation: Workstation = outputs[..].try_into()?;
 
         assert_eq!(
             workstation,
             Workstation {
-                laptop: Some(laptop.clone()),
-                externals: Some((external1.clone(), vec![external2.clone()]))
+                laptop: Some(outputs[0].clone()),
+                externals: Some((outputs[1].clone(), vec![outputs[2].clone()]))
             }
         );
 
@@ -739,61 +908,79 @@ mod tests {
                 Setup::LaptopLeft,
                 PlanExpect::Valid(
                     Plan {
-                        monitors: vec![
-                            laptop.clone().on(),
-                            external1.clone().on(),
-                            external2.clone().on(),
+                        output_settings: vec![
+                            outputs[0].clone().on(),
+                            outputs[1].clone().on(),
+                            outputs[2].clone().on(),
                         ],
+                        workspace_settings:vec![],
                     },
-                    "--output eDP-1 --auto --output DP-1 --auto --right-of eDP-1 --output DP-2 --auto --right-of DP-1",
+                    "--output eDP-1 --auto --output DP-1 --auto --right-of eDP-1 --output HDMI-1 --auto --right-of DP-1",
                 ),
             ),
             (
                 Setup::LaptopRight,
                 PlanExpect::Valid(
                     Plan {
-                        monitors: vec![
-                            external1.clone().on(),
-                            external2.clone().on(),
-                            laptop.clone().on(),
+                        output_settings: vec![
+                            outputs[1].clone().on(),
+                            outputs[2].clone().on(),
+                            outputs[0].clone().on(),
                         ],
+                        workspace_settings:vec![],
                     },
-                    "--output DP-1 --auto --output DP-2 --auto --right-of DP-1 --output eDP-1 --auto --right-of DP-2",
+                    "--output DP-1 --auto --output HDMI-1 --auto --right-of DP-1 --output eDP-1 --auto --right-of HDMI-1",
                 ),
             ),
             (
                 Setup::LaptopOnly,
                 PlanExpect::Valid(
                     Plan {
-                        monitors: vec![
-                            laptop.clone().on(),
-                            external1.clone().off(),
-                            external2.clone().off(),
+                        output_settings: vec![
+                            outputs[0].clone().on(),
+                            outputs[1].clone().off(),
+                            outputs[2].clone().off(),
                         ],
+                        workspace_settings:vec![],
                     },
-                    "--output eDP-1 --auto --output DP-1 --off --output DP-2 --off",
+                    "--output eDP-1 --auto --output DP-1 --off --output HDMI-1 --off",
                 ),
             ),
             (
                 Setup::ExternalOnly,
                 PlanExpect::Valid(
                     Plan {
-                        monitors: vec![
-                            external1.clone().on(),
-                            external2.clone().on(),
-                            laptop.clone().off(),
+                        output_settings: vec![
+                            outputs[1].clone().on(),
+                            outputs[2].clone().on(),
+                            outputs[0].clone().off(),
                         ],
+                        workspace_settings:vec![],
                     },
-                    "--output DP-1 --auto --output DP-2 --auto --right-of DP-1 --output eDP-1 --off",
+                    "--output DP-1 --auto --output HDMI-1 --auto --right-of DP-1 --output eDP-1 --off",
                 ),
             ),
         ] {
-            let result = workstation.plan(setup);
+            let result = workstation.plan(setup, &workspaces);
             match expect {
                 PlanExpect::Error => assert!(result.is_err()),
                 PlanExpect::Valid(plan, cmd) => {
-                    assert_eq!(result?, plan);
-                    assert_eq!(plan.command().1.join(" "), cmd);
+                    assert_eq!(result?.output_settings, plan.output_settings);
+                    assert_eq!(
+                        plan.commands()
+                            .into_iter()
+                            .filter_map(|cmd| {
+                                match cmd {
+                                    Command::Xrandr(_cmd, args) => {
+                                        Some(args.join(" "))
+                                    }
+                                    Command::MoveWorkspace { .. } => None,
+                                }
+                            })
+                            .next()
+                            .unwrap(),
+                        cmd
+                    );
                 }
             }
         }

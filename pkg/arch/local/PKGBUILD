@@ -1,0 +1,40 @@
+# Maintainer: Hannes Körber <hannes@hkoerber.de>
+pkgname='screencfg'
+pkgver=0.1.r0.g1e8bf1d
+pkgrel=1
+pkgdesc='Automatically configure your screen setup'
+arch=('x86_64')
+url='https://github.com/hakoerber/screencfg'
+license=('GPL-3.0-only')
+depends=('glibc' 'gcc-libs')
+makedepends=('cargo' 'git')
+source=()
+sha256sums=()
+
+prepare() {
+  cd "../../../.."
+  pwd
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "../../../.."
+  pwd
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "../../../.."
+  pwd
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen
+}
+
+package() {
+  pwd
+  cd "../../../.."
+  install -Dm0755 -t "$pkgdir/usr/bin/" "target/release/${pkgname/-git}"
+}

@@ -41,12 +41,10 @@ impl From<serde_json::Error> for Error {
 
 impl std::error::Error for Error {}
 
-pub struct Connection(net::UnixStream);
-
 #[derive(Clone)]
 pub enum Command {
     Nop,
-    MoveWorkspace { id: usize, output: Output },
+    MoveWorkspace { id: usize, output: String },
 }
 
 impl From<Command> for String {
@@ -54,17 +52,210 @@ impl From<Command> for String {
         match value {
             Command::Nop => "nop".to_string(),
             Command::MoveWorkspace { id, output } => {
-                format!(
-                    "[workspace=\"{id}\"] move workspace to output {}",
-                    output.name
-                )
+                format!("[workspace=\"{id}\"] move workspace to output {output}")
             }
         }
     }
 }
 
-impl Connection {
-    pub fn version(&mut self) -> Result<Version, Error> {
+#[allow(dead_code)]
+pub trait Conn {
+    fn version(&mut self) -> Result<Version, Error>;
+    fn outputs(&mut self) -> Result<Outputs, Error>;
+    fn workspaces(&mut self) -> Result<Workspaces, Error>;
+    fn command(&mut self, command: Command) -> Result<(), Error>;
+}
+
+#[cfg(test)]
+pub enum MockSetting {
+    LaptopOnly,
+    ExternalOnly(usize),
+    Mixed,
+}
+
+#[cfg(test)]
+pub struct MockConnection {
+    pub fail: bool,
+    pub setting: MockSetting,
+}
+
+#[cfg(test)]
+impl MockConnection {
+    fn check_fail(&self) -> Result<(), Error> {
+        if self.fail {
+            Err(Error::Connection("fail".into()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+impl Conn for MockConnection {
+    fn version(&mut self) -> Result<Version, Error> {
+        self.check_fail()?;
+        Ok(Version {
+            minor: 1,
+            patch: 2,
+            major: 3,
+        })
+    }
+
+    fn outputs(&mut self) -> Result<Outputs, Error> {
+        self.check_fail()?;
+        match self.setting {
+            MockSetting::LaptopOnly => Ok(Outputs(vec![Output {
+                name: "eDP-1".into(),
+                active: true,
+                primary: true,
+            }])),
+            MockSetting::ExternalOnly(num) => match num {
+                1 => Ok(Outputs(vec![Output {
+                    name: "DP-1".into(),
+                    active: true,
+                    primary: false,
+                }])),
+                2 => Ok(Outputs(vec![
+                    Output {
+                        name: "DP-1".into(),
+                        active: true,
+                        primary: false,
+                    },
+                    Output {
+                        name: "DP-2".into(),
+                        active: false,
+                        primary: false,
+                    },
+                ])),
+                _ => panic!(),
+            },
+            MockSetting::Mixed => Ok(Outputs(vec![
+                Output {
+                    name: "eDP-1".into(),
+                    active: true,
+                    primary: true,
+                },
+                Output {
+                    name: "HDMI-1".into(),
+                    active: true,
+                    primary: false,
+                },
+                Output {
+                    name: "DP-1".into(),
+                    active: true,
+                    primary: false,
+                },
+            ])),
+        }
+    }
+
+    fn workspaces(&mut self) -> Result<Workspaces, Error> {
+        self.check_fail()?;
+        match self.setting {
+            MockSetting::LaptopOnly => Ok(Workspaces(vec![
+                Workspace {
+                    num: 1,
+                    name: "num1".into(),
+                    output: "eDP-1".into(),
+                },
+                Workspace {
+                    num: 1,
+                    name: "num1".into(),
+                    output: "eDP-1".into(),
+                },
+                Workspace {
+                    num: 1,
+                    name: "num1".into(),
+                    output: "eDP-1".into(),
+                },
+                Workspace {
+                    num: 1,
+                    name: "num1".into(),
+                    output: "eDP-1".into(),
+                },
+            ])),
+            MockSetting::ExternalOnly(num) => match num {
+                1 => Ok(Workspaces(vec![
+                    Workspace {
+                        num: 1,
+                        name: "num1".into(),
+                        output: "DP-1".into(),
+                    },
+                    Workspace {
+                        num: 1,
+                        name: "num1".into(),
+                        output: "DP-1".into(),
+                    },
+                    Workspace {
+                        num: 1,
+                        name: "num1".into(),
+                        output: "DP-1".into(),
+                    },
+                    Workspace {
+                        num: 1,
+                        name: "num1".into(),
+                        output: "DP-1".into(),
+                    },
+                ])),
+                2 => Ok(Workspaces(vec![
+                    Workspace {
+                        num: 1,
+                        name: "num1".into(),
+                        output: "DP-1".into(),
+                    },
+                    Workspace {
+                        num: 1,
+                        name: "num1".into(),
+                        output: "DP-1".into(),
+                    },
+                    Workspace {
+                        num: 1,
+                        name: "num1".into(),
+                        output: "DP-2".into(),
+                    },
+                    Workspace {
+                        num: 1,
+                        name: "num1".into(),
+                        output: "DP-2".into(),
+                    },
+                ])),
+                _ => panic!(),
+            },
+            MockSetting::Mixed => Ok(Workspaces(vec![
+                Workspace {
+                    num: 1,
+                    name: "num1".into(),
+                    output: "eDP-1".into(),
+                },
+                Workspace {
+                    num: 1,
+                    name: "num1".into(),
+                    output: "eDP-1".into(),
+                },
+                Workspace {
+                    num: 1,
+                    name: "num1".into(),
+                    output: "DP-1".into(),
+                },
+                Workspace {
+                    num: 1,
+                    name: "num1".into(),
+                    output: "HDMI-1".into(),
+                },
+            ])),
+        }
+    }
+
+    fn command(&mut self, _command: Command) -> Result<(), Error> {
+        self.check_fail()?;
+        Ok(())
+    }
+}
+
+pub struct Connection(net::UnixStream);
+
+impl Conn for Connection {
+    fn version(&mut self) -> Result<Version, Error> {
         Message::Version.send(self)?;
 
         let response = Response::read(self)?;
@@ -77,7 +268,7 @@ impl Connection {
         }
     }
 
-    pub fn outputs(&mut self) -> Result<Outputs, Error> {
+    fn outputs(&mut self) -> Result<Outputs, Error> {
         Message::Outputs.send(self)?;
         let response = Response::read(self)?;
 
@@ -89,7 +280,7 @@ impl Connection {
         }
     }
 
-    pub fn workspaces(&mut self) -> Result<Workspaces, Error> {
+    fn workspaces(&mut self) -> Result<Workspaces, Error> {
         Message::Workspaces.send(self)?;
 
         let response = Response::read(self)?;
@@ -102,7 +293,7 @@ impl Connection {
         }
     }
 
-    pub fn command(&mut self, command: Command) -> Result<(), Error> {
+    fn command(&mut self, command: Command) -> Result<(), Error> {
         Message::Command(command).send(self)?;
 
         let response = Response::read(self)?;
@@ -162,9 +353,9 @@ struct OutputPayload {
 
 #[derive(Clone, Debug)]
 pub struct Output {
-    name: String,
-    active: bool,
-    primary: bool,
+    pub name: String,
+    pub active: bool,
+    pub primary: bool,
 }
 
 impl fmt::Display for Output {
@@ -205,6 +396,19 @@ impl IntoIterator for Workspaces {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+impl Deref for Workspaces {
+    type Target = [Workspace];
+
+    fn deref(&self) -> &[Workspace] {
+        &self.0[..]
+    }
+}
+impl DerefMut for Workspaces {
+    fn deref_mut(&mut self) -> &mut [Workspace] {
+        &mut self.0[..]
     }
 }
 
@@ -272,12 +476,10 @@ impl From<Message> for u32 {
 }
 
 impl Message {
-    fn bytes(self) -> Vec<u8> {
+    fn bytes(self) -> Result<Vec<u8>, Error> {
         let payload: Option<String> = match self {
             Message::Command(ref command) => Some(command.clone().into()),
-            Message::Workspaces => None,
-            Message::Outputs => None,
-            Message::Version => None,
+            Message::Workspaces | Message::Outputs | Message::Version => None,
         };
 
         let mut message: Vec<u8> = vec![];
@@ -285,18 +487,19 @@ impl Message {
 
         message.extend_from_slice("i3-ipc".as_bytes());
         message.extend_from_slice(
-            &(payload.as_ref().map_or(0, |payload| payload.len()) as u32).to_ne_bytes(),
+            &u32::try_from(payload.as_ref().map_or(0, String::len))
+                .map_err(|_| Error::Command("payload length bigger than 4 bytes".into()))?
+                .to_ne_bytes(),
         );
         message.extend_from_slice(&(command_number.to_ne_bytes()));
         if let Some(payload) = payload {
-            message.extend_from_slice(payload.as_bytes())
+            message.extend_from_slice(payload.as_bytes());
         }
-        message
+        Ok(message)
     }
 
     fn send(self, socket: &mut Connection) -> Result<(), Error> {
-        let message = self.bytes();
-        println!("{message:?}");
+        let message = self.bytes()?;
         socket.0.write_all(&message)?;
         Ok(())
     }
@@ -351,10 +554,10 @@ struct CommandPayload {
 
 #[derive(Debug)]
 pub struct Workspace {
-    num: usize,
+    pub num: usize,
     #[allow(dead_code)]
-    name: String,
-    output: String,
+    pub name: String,
+    pub output: String,
 }
 
 impl fmt::Display for Workspace {
@@ -401,7 +604,7 @@ impl Response {
             1 => Ok(Response::Workspaces(serde_json::from_slice(&response)?)),
             3 => Ok(Response::Outputs(serde_json::from_slice(&response)?)),
             7 => Ok(Response::Version(serde_json::from_slice(&response)?)),
-            _ => return Err(Error::Connection("unknown response type".into())),
+            _ => Err(Error::Connection("unknown response type".into())),
         }
     }
 }
