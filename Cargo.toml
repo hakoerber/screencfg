@@ -1,8 +1,8 @@
 [package]
 name = "screencfg"
+version.workspace = true
+edition.workspace = true
 description = "Automatically configure your screen setup with i3"
-version = "0.1.0"
-edition = "2021"
 repository = "https://github.com/hakoerber/screencfg/"
 authors = ["Hannes Körber <hannes@hkoerber.de>"]
 rust-version = "1.74.1"
@@ -10,6 +10,14 @@ readme = "README.md"
 license-file = "LICENSE"
 keywords = ["i3", "xrandr"]
 categories = ["command-line-utilities"]
+
+[workspace]
+resolver = "2"
+members = ["i3", "xrandr"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
 
 [dependencies]
 clap = { version = "4.*", default-features = false, features = [
@@ -30,10 +38,6 @@ full = [
   "clap/usage",
   "clap/error-context",
 ]
-
-[workspace]
-resolver = "2"
-members = ["i3", "xrandr"]
 
 [profile.release]
 opt-level = 3
