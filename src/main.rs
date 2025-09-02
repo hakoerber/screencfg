@@ -591,6 +591,32 @@ impl<'ws, 'out> Workstation<'out> {
         })
     }
 
+    fn projector(
+        workspaces: &'ws Workspaces<'out>,
+        laptop: &'out Output,
+        external: &'out Output,
+    ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
+        let mut v = vec![];
+        for workspace in &workspaces.0 {
+            let target_output = match workspace.num {
+                0..=9 => laptop,
+                10 => external,
+                _ => {
+                    return Err(Error::InvalidSetup(
+                        "only workspaces between 1 and 10 are supported".into(),
+                    ))
+                }
+            };
+            if workspace.output != target_output {
+                v.push(WorkspaceSetting {
+                    workspace,
+                    output: target_output,
+                });
+            }
+        }
+        Ok(v)
+    }
+
     fn distribute_workspaces(
         workspaces: &'ws Workspaces<'out>,
         laptop: &'out Output,
@@ -655,10 +681,41 @@ impl<'ws, 'out> Workstation<'out> {
                     match setup {
                         Setup::LaptopLeft => output_settings.insert(0, laptop.on()),
                         Setup::LaptopRight => output_settings.push(laptop.on()),
-                        Setup::LaptopOnly | Setup::ExternalOnly => {
+                        Setup::LaptopOnly | Setup::ExternalOnly | Setup::Projector => {
                             unreachable!("checked for enum values above")
                         }
                     }
+
+                    Ok(Plan {
+                        output_settings,
+                        workspace_settings,
+                    })
+                }
+            },
+            Setup::Projector => match self.laptop {
+                None => Err(Error::Plan("no laptop screen found".into())),
+                Some(laptop) => {
+                    let Some(ref externals) = self.externals else {
+                        return Err(Error::Plan("no external screens found".into()));
+                    };
+
+                    if !externals.1.is_empty() {
+                        return Err(Error::Plan(
+                            "can only project with single external screen".into(),
+                        ));
+                    }
+
+                    let external = externals.0;
+
+                    let workspace_settings = Self::projector(workspaces, laptop, external)?;
+
+                    let mut output_settings = vec![laptop.on(), externals.0.on()];
+                    output_settings.append(&mut externals.1.iter().map(|ext| ext.on()).collect());
+                    output_settings.extend(
+                        self.disconnected_externals
+                            .iter()
+                            .map(|output| output.off()),
+                    );
 
                     Ok(Plan {
                         output_settings,
@@ -723,6 +780,7 @@ enum Setup {
     LaptopRight,
     LaptopOnly,
     ExternalOnly,
+    Projector,
 }
 
 #[derive(Clone, Debug, Args)]
