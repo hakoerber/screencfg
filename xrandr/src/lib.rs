@@ -39,7 +39,7 @@ impl Output {
         )?
         .lines()
         .skip(1) // skip header
-        .filter(|line| line.chars().next().map_or(false, char::is_alphanumeric))
+        .filter(|line| line.chars().next().is_some_and(char::is_alphanumeric))
         .map(|line| {
             let mut parts = line.split_whitespace();
             match (parts.next(), parts.next()) {

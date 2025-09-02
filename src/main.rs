@@ -527,7 +527,7 @@ impl<'ws, 'out> Workstation<'out> {
             workspace_settings: workspaces
                 .0
                 .iter()
-                .filter(|workspace| (workspace.output != laptop))
+                .filter(|workspace| workspace.output != laptop)
                 .map(|workspace| WorkspaceSetting {
                     workspace,
                     output: laptop,
