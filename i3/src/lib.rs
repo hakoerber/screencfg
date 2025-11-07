@@ -270,10 +270,11 @@ impl Conn for Connection {
             Response::Command(commands) => {
                 for payload in commands {
                     if !payload.success {
-                        return Err(Error::Command(match payload.error {
-                            Some(err) => err.into(),
-                            None => "unknown error".into(),
-                        }));
+                        return Err(Error::Command(
+                            payload
+                                .error
+                                .map_or_else(|| "unknown error".into(), |err| err.into()),
+                        ));
                     }
                 }
                 Ok(())
