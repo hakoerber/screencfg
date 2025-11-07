@@ -130,7 +130,7 @@ checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
 name = "i3"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -247,7 +247,7 @@ checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 
 [[package]]
 name = "screencfg"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "debounce",
@@ -559,4 +559,4 @@ dependencies = [
 
 [[package]]
 name = "xrandr"
-version = "0.3.0"
+version = "0.4.0"
