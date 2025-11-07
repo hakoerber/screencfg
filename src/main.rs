@@ -1,9 +1,4 @@
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    env, fmt,
-    path::PathBuf,
-    process,
-};
+use std::{env, fmt, path::PathBuf, process};
 
 use clap::{Args, Parser, ValueEnum};
 
@@ -116,46 +111,9 @@ impl<'out> Output {
     }
 
     fn findall(i3: &mut i3::Connection) -> Result<Vec<Self>, Error> {
-        let i3_outputs = i3
-            .outputs()?
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<Self>, Error>>()?;
-
-        let xrandr_outputs = xrandr::Output::findall()?
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<Self>, Error>>()?;
-
-        // TODO: do this better, without cloning name
-
-        let mut outputs: HashMap<String, Output> = HashMap::from_iter(
-            i3_outputs
-                .into_iter()
-                .map(|output| (output.name.clone(), output)),
-        );
-
-        for xrandr_output in xrandr_outputs {
-            match outputs.entry(xrandr_output.name.clone()) {
-                Entry::Occupied(existing) => {
-                    let i3_connection_state = &existing.get().connection_state;
-                    if i3_connection_state != &xrandr_output.connection_state {
-                        return Err(Error::Generic(
-                            format!(
-                                "connection state mismatch, i3:{}, xrandr:{}",
-                                i3_connection_state, xrandr_output.connection_state,
-                            )
-                            .into(),
-                        ));
-                    }
-                }
-                Entry::Vacant(entry) => {
-                    entry.insert(xrandr_output);
-                }
-            }
-        }
-
-        Ok(outputs.into_values().collect())
+        // if there is a connection state mismatch, we go with i3, as xrandr may still
+        // have inactive outputs maked as active
+        i3.outputs()?.into_iter().map(TryInto::try_into).collect()
     }
 }
 
