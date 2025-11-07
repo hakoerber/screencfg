@@ -1,6 +1,6 @@
 # Maintainer: Hannes Körber <hannes@hkoerber.de>
 pkgname='screencfg-git'
-pkgver=0.1.r0.g1e8bf1d
+pkgver=0.3.r1.g92e67f9
 pkgrel=1
 pkgdesc='Automatically configure your screen setup'
 arch=('x86_64')
@@ -10,7 +10,7 @@ depends=('glibc' 'gcc-libs')
 makedepends=('cargo' 'git')
 provides=('screencfg')
 conflicts=('screencfg')
-source=("${pkgname}::git+https://github.com/hakoerber/screencfg#branch=master")
+source=("${pkgname}::git+https://github.com/hakoerber/screencfg#branch=develop")
 sha256sums=('SKIP')
 
 pkgver() {
