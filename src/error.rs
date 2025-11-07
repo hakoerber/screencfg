@@ -24,7 +24,7 @@ impl fmt::Display for Msg {
             f,
             "{}",
             match self {
-                Msg::Owned(ref s) => s.as_str(),
+                Msg::Owned(s) => s.as_str(),
                 Msg::Static(s) => s,
             }
         )
@@ -45,6 +45,7 @@ pub(crate) enum Error {
     InvalidConfig(Msg),
     ConfigFileOpen(io::Error),
     ConfigNotFound { path: PathBuf },
+    Udev(crate::udev::Error),
 }
 
 impl fmt::Display for Error {
@@ -66,6 +67,7 @@ impl fmt::Display for Error {
                 Self::ConfigFileOpen(ref err) => format!("could not open config: {err}"),
                 Self::ConfigNotFound { ref path } =>
                     format!("could not find config file at {}", path.display()),
+                Self::Udev(ref udev_error) => format!("udev error: {udev_error}"),
             },
         )
     }
@@ -74,6 +76,12 @@ impl fmt::Display for Error {
 impl From<fmt::Error> for Error {
     fn from(value: fmt::Error) -> Self {
         Self::Generic(Msg::Owned(value.to_string()))
+    }
+}
+
+impl From<crate::udev::Error> for Error {
+    fn from(value: crate::udev::Error) -> Self {
+        Self::Udev(value)
     }
 }
 

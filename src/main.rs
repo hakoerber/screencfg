@@ -1,13 +1,21 @@
-use std::{env, fmt, path::PathBuf, process};
-
-use clap::{Args, Parser, ValueEnum};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    env, fmt,
+    path::PathBuf,
+    process, time,
+};
 
 use i3::Conn as _;
 
 mod error;
 use error::Error;
 
+mod cli;
 mod config;
+mod udev;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OutputClass {
@@ -45,7 +53,7 @@ impl OutputClass {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 enum OutputConnectionState {
     Connected,
     Disconnected,
@@ -111,9 +119,43 @@ impl<'out> Output {
     }
 
     fn findall(i3: &mut i3::Connection) -> Result<Vec<Self>, Error> {
-        // if there is a connection state mismatch, we go with i3, as xrandr may still
-        // have inactive outputs maked as active
-        i3.outputs()?.into_iter().map(TryInto::try_into).collect()
+        let i3_outputs = i3
+            .outputs()?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<Self>, Error>>()?;
+
+        let xrandr_outputs = xrandr::Output::findall()?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<Self>, Error>>()?;
+
+        // TODO: do this better, without cloning name
+
+        let mut outputs: HashMap<String, Output> = HashMap::from_iter(
+            i3_outputs
+                .into_iter()
+                .map(|output| (output.name.clone(), output)),
+        );
+
+        for xrandr_output in xrandr_outputs {
+            match outputs.entry(xrandr_output.name.clone()) {
+                Entry::Occupied(mut existing) => {
+                    let i3_connection_state = existing.get().connection_state;
+                    if i3_connection_state != xrandr_output.connection_state {
+                        // if there is a connection state mismatch, we go with i3, as xrandr may still
+                        // have inactive outputs maked as active
+                        existing.get_mut().connection_state = i3_connection_state;
+                    }
+                }
+                // if i3 does not know about the output, we use the xrandr state as-is
+                Entry::Vacant(entry) => {
+                    entry.insert(xrandr_output);
+                }
+            }
+        }
+
+        Ok(outputs.into_values().collect())
     }
 }
 
@@ -140,7 +182,7 @@ impl<'out> TryFrom<&'out [Output]> for Workstation<'out> {
             _ => {
                 return Err(Error::Workstation(
                     "found more than one laptop screen".into(),
-                ))
+                ));
             }
         };
 
@@ -465,14 +507,12 @@ impl<'ws, 'out> Workstation<'out> {
         Plan {
             output_settings: {
                 let mut outputs = vec![laptop.on()];
-                outputs.append({
-                    &mut match externals {
-                        None => vec![],
-                        Some((ext, rest)) => {
-                            let mut v = vec![ext.off()];
-                            v.append(&mut rest.iter().map(|ext| ext.off()).collect());
-                            v
-                        }
+                outputs.append(&mut match externals {
+                    None => vec![],
+                    Some((ext, rest)) => {
+                        let mut v = vec![ext.off()];
+                        v.append(&mut rest.iter().map(|ext| ext.off()).collect());
+                        v
                     }
                 });
                 outputs.extend(
@@ -528,13 +568,13 @@ impl<'ws, 'out> Workstation<'out> {
                             _ => {
                                 return Err(Error::InvalidSetup(
                                     "more than 2 external monitors not supported".into(),
-                                ))
+                                ));
                             }
                         },
                         _ => {
                             return Err(Error::InvalidSetup(
                                 "only workspaces between 1 and 10 are supported".into(),
-                            ))
+                            ));
                         }
                     };
                     if workspace.output != target_output {
@@ -562,7 +602,7 @@ impl<'ws, 'out> Workstation<'out> {
                 _ => {
                     return Err(Error::InvalidSetup(
                         "only workspaces between 1 and 10 are supported".into(),
-                    ))
+                    ));
                 }
             };
             if workspace.output != target_output {
@@ -594,13 +634,13 @@ impl<'ws, 'out> Workstation<'out> {
                     _ => {
                         return Err(Error::InvalidSetup(
                             "more than 2 external monitors not supported".into(),
-                        ))
+                        ));
                     }
                 },
                 _ => {
                     return Err(Error::InvalidSetup(
                         "only workspaces between 1 and 10 are supported".into(),
-                    ))
+                    ));
                 }
             };
             if workspace.output != target_output {
@@ -732,7 +772,7 @@ impl TryFrom<xrandr::Output> for Output {
     }
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug)]
 enum Setup {
     LaptopLeft,
     LaptopRight,
@@ -741,42 +781,22 @@ enum Setup {
     Projector,
 }
 
-#[derive(Clone, Debug, Args)]
-#[group(multiple = false, required = true)]
-struct Approach {
-    #[arg(long)]
-    setup: Option<Setup>,
-
-    #[arg(long)]
-    best: bool,
-}
-
-#[derive(Debug, Parser)]
-#[command(version, about)]
-struct Cli {
-    #[command(flatten)]
-    approach: Approach,
-
-    #[arg(long)]
-    dry_run: bool,
-
-    #[arg(long)]
-    diagram: bool,
-
-    #[arg(long)]
-    debug: bool,
-
-    #[arg(long)]
-    config: Option<String>,
+impl From<cli::Setup> for Setup {
+    fn from(value: cli::Setup) -> Self {
+        match value {
+            cli::Setup::LaptopLeft => Self::LaptopLeft,
+            cli::Setup::LaptopRight => Self::LaptopRight,
+            cli::Setup::LaptopOnly => Self::LaptopOnly,
+            cli::Setup::ExternalOnly => Self::ExternalOnly,
+            cli::Setup::Projector => Self::Projector,
+        }
+    }
 }
 
 const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
 
-#[expect(clippy::print_stdout, reason = "main")]
-fn run() -> Result<(), Error> {
-    let args = Cli::parse();
-
-    let config = match args.config {
+fn find_config(path: Option<String>) -> Result<Option<config::Config>, Error> {
+    match path {
         Some(path) => {
             let path = PathBuf::from(path);
             match config::from_path(&path)? {
@@ -805,26 +825,25 @@ fn run() -> Result<(), Error> {
             config_home.push("screencfg.toml");
             Ok(config::from_path(&config_home)?)
         }
-    }?;
+    }
+}
 
+fn manage_screens(
+    config: Option<&config::Config>,
+    debug: bool,
+    dry_run: bool,
+    diagram: bool,
+    approach: cli::Approach,
+) -> Result<(), Error> {
     let mut i3_connection = i3::connect()?;
 
     let outputs = Output::findall(&mut i3_connection)?;
-
-    if args.debug {
-        println!("i3 outputs:");
-        for output in &outputs {
-            println!("  - {output}");
-        }
-        println!();
-    }
-
     let workstation: Workstation = (&*outputs).try_into()?;
 
     let workspaces = i3_connection.workspaces()?;
     let workspaces = Workspaces::convert(workspaces, &outputs.iter().collect::<Vec<&Output>>())?;
 
-    if args.debug {
+    if debug {
         println!("i3 workspaces:");
         for workspace in &workspaces.0 {
             println!("  - {workspace}");
@@ -834,8 +853,8 @@ fn run() -> Result<(), Error> {
 
     i3_connection.command(i3::Command::Nop)?;
 
-    let plan = if let Some(setup) = args.approach.setup {
-        workstation.plan(setup, &workspaces)?
+    let plan = if let Some(setup) = approach.setup {
+        workstation.plan(setup.into(), &workspaces)?
     } else {
         workstation
             .plan(Setup::LaptopLeft, &workspaces)
@@ -844,17 +863,18 @@ fn run() -> Result<(), Error> {
             .map_err(|_| Error::Plan("no plan fit with \"best\" strategy".into()))?
     };
 
-    if args.debug {
+    if debug {
         println!("{plan}");
     }
-    if args.diagram {
+
+    if diagram {
         let mut buf = String::new();
         plan.diagram(&mut buf)?;
 
         println!("{buf}\n");
     }
 
-    let commands = if args.dry_run {
+    let commands = if dry_run {
         plan.commands()
     } else {
         plan.apply(&mut i3_connection)?
@@ -865,7 +885,7 @@ fn run() -> Result<(), Error> {
         println!("- {command}");
     }
 
-    if let Some(post_commands) = config.and_then(|c| c.post_commands) {
+    if let Some(post_commands) = config.and_then(|c| c.post_commands.as_ref()) {
         for command in post_commands {
             println!("executing post command \"{command}\"");
             let output = process::Command::new("bash")
@@ -894,6 +914,65 @@ fn run() -> Result<(), Error> {
     Ok(())
 }
 
+#[expect(clippy::print_stdout, reason = "main")]
+fn run() -> Result<(), Error> {
+    let args = cli::Cli::parse();
+
+    match args.subcommand {
+        cli::Cmd::Set(set_options) => {
+            let config = find_config(args.config)?;
+
+            manage_screens(
+                config.as_ref(),
+                args.debug,
+                set_options.dry_run,
+                set_options.diagram,
+                set_options.approach,
+            )?;
+        }
+        #[allow(unused)]
+        cli::Cmd::Watch(watch_options) => {
+            let config = find_config(args.config)?;
+
+            // used to differentiate between multiple event streams / sockets. We only have one, so
+            // we can use any constant value.
+            const TOKEN: mio::Token = mio::Token(0);
+
+            let mut events = mio::Events::with_capacity(1024);
+
+            let socket = udev::EventListener::new(udev::Subsystem::Drm)?;
+
+            let mut stream = udev::EventStream::from_listener(socket, TOKEN)?;
+
+            let err = stream.handle(
+                |event_type| {
+                    matches!(
+                        event_type,
+                        udev::EventType::Add | udev::EventType::Remove | udev::EventType::Change
+                    )
+                },
+                move |event| {
+                    if args.debug {
+                        println!("Received event: {event:?}");
+                    }
+                    manage_screens(
+                        config.as_ref(),
+                        args.debug,
+                        watch_options.dry_run,
+                        watch_options.diagram,
+                        watch_options.approach,
+                    )
+                },
+                time::Duration::from_secs(1),
+            );
+
+            eprintln!("{err}");
+        }
+    }
+
+    Ok(())
+}
+
 #[allow(clippy::print_stderr, reason = "main")]
 fn main() -> process::ExitCode {
     process::ExitCode::from(match run() {
@@ -903,373 +982,4 @@ fn main() -> process::ExitCode {
             1
         }
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    enum PlanExpect<'cmd, 'ws, 'out> {
-        Error,
-        Valid(Plan<'ws, 'out>, &'cmd str),
-    }
-
-    #[test]
-    fn single_laptop() -> Result<(), Error> {
-        let mut connection = i3::MockConnection {
-            fail: false,
-            setting: i3::MockSetting::LaptopOnly,
-        };
-
-        let mut outputs = connection
-            .outputs()?
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<Output>, Error>>()?;
-        outputs.sort();
-
-        let workspaces = Workspaces::convert(
-            connection.workspaces()?,
-            &outputs.iter().collect::<Vec<&Output>>(),
-        )?;
-
-        let workstation: Workstation = outputs[..].try_into()?;
-
-        assert_eq!(
-            &workstation,
-            &Workstation {
-                laptop: Some(&outputs[0]),
-                externals: None,
-                disconnected_externals: vec![],
-            }
-        );
-
-        for (setup, expect) in [
-            (Setup::LaptopLeft, PlanExpect::Error),
-            (Setup::LaptopRight, PlanExpect::Error),
-            (
-                Setup::LaptopOnly,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![outputs[0].on()],
-                        workspace_settings: vec![],
-                    },
-                    "--output eDP-1 --auto",
-                ),
-            ),
-            (Setup::ExternalOnly, PlanExpect::Error),
-        ] {
-            let result = workstation.plan(setup, &workspaces);
-            match expect {
-                PlanExpect::Error => assert!(result.is_err()),
-                PlanExpect::Valid(plan, cmd) => {
-                    assert_eq!(result?, plan);
-                    assert_eq!(
-                        plan.commands()
-                            .into_iter()
-                            .filter_map(|cmd| {
-                                match cmd {
-                                    Command::Xrandr(_cmd, args) => Some(args.join(" ")),
-                                    Command::MoveWorkspace { .. } => None,
-                                }
-                            })
-                            .next()
-                            .unwrap(),
-                        cmd
-                    );
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn multiple_laptops() -> Result<(), Error> {
-        let laptop1 = Output {
-            name: "eDP-1".to_string(),
-            class: OutputClass::Laptop,
-            connection_state: OutputConnectionState::Connected,
-        };
-
-        let laptop2 = Output {
-            name: "eDP-2".to_string(),
-            class: OutputClass::Laptop,
-            connection_state: OutputConnectionState::Connected,
-        };
-
-        let outputs = [laptop1, laptop2];
-
-        let workstation: Result<Workstation, Error> = outputs[..].try_into();
-
-        assert!(workstation.is_err());
-
-        Ok(())
-    }
-
-    #[test]
-    fn no_screens() -> Result<(), Error> {
-        let outputs = [];
-
-        let workstation: Result<Workstation, Error> = outputs[..].try_into();
-
-        assert!(workstation.is_err());
-
-        Ok(())
-    }
-
-    #[test]
-    fn single_external() -> Result<(), Error> {
-        let mut connection = i3::MockConnection {
-            fail: false,
-            setting: i3::MockSetting::ExternalOnly(1),
-        };
-
-        let mut outputs = connection
-            .outputs()?
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<Output>, Error>>()?;
-        outputs.sort();
-
-        let workspaces = Workspaces::convert(
-            connection.workspaces()?,
-            &outputs.iter().collect::<Vec<&Output>>(),
-        )?;
-
-        let workstation: Workstation = outputs[..].try_into()?;
-
-        assert_eq!(
-            workstation,
-            Workstation {
-                laptop: None,
-                externals: Some((&outputs[0], vec![])),
-                disconnected_externals: vec![],
-            }
-        );
-
-        for (setup, expect) in [
-            (Setup::LaptopLeft, PlanExpect::Error),
-            (Setup::LaptopRight, PlanExpect::Error),
-            (Setup::LaptopOnly, PlanExpect::Error),
-            (
-                Setup::ExternalOnly,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![outputs[0].on()],
-                        workspace_settings: vec![],
-                    },
-                    "--output DP-1 --auto",
-                ),
-            ),
-        ] {
-            let result = workstation.plan(setup, &workspaces);
-            match expect {
-                PlanExpect::Error => assert!(result.is_err()),
-                PlanExpect::Valid(plan, cmd) => {
-                    assert_eq!(result?.output_settings, plan.output_settings);
-                    assert_eq!(
-                        plan.commands()
-                            .into_iter()
-                            .filter_map(|cmd| {
-                                match cmd {
-                                    Command::Xrandr(_cmd, args) => Some(args.join(" ")),
-                                    Command::MoveWorkspace { .. } => None,
-                                }
-                            })
-                            .next()
-                            .unwrap(),
-                        cmd
-                    );
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn multiple_external() -> Result<(), Error> {
-        let mut connection = i3::MockConnection {
-            fail: false,
-            setting: i3::MockSetting::ExternalOnly(2),
-        };
-
-        let mut outputs = connection
-            .outputs()?
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<Output>, Error>>()?;
-        outputs.sort();
-
-        let workspaces = Workspaces::convert(
-            connection.workspaces()?,
-            &outputs.iter().collect::<Vec<&Output>>(),
-        )?;
-
-        let workstation: Workstation = outputs[..].try_into()?;
-
-        assert_eq!(
-            workstation,
-            Workstation {
-                laptop: None,
-                externals: Some((&outputs[0], vec![&outputs[1]])),
-                disconnected_externals: vec![],
-            }
-        );
-
-        for (setup, expect) in [
-            (Setup::LaptopLeft, PlanExpect::Error),
-            (Setup::LaptopRight, PlanExpect::Error),
-            (Setup::LaptopOnly, PlanExpect::Error),
-            (
-                Setup::ExternalOnly,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![outputs[0].on(), outputs[1].on()],
-                        workspace_settings: vec![],
-                    },
-                    "--output DP-1 --auto --output DP-2 --auto --right-of DP-1",
-                ),
-            ),
-        ] {
-            let result = workstation.plan(setup, &workspaces);
-            match expect {
-                PlanExpect::Error => assert!(result.is_err()),
-                PlanExpect::Valid(plan, cmd) => {
-                    assert_eq!(result?.output_settings, plan.output_settings);
-                    assert_eq!(
-                        plan.commands()
-                            .into_iter()
-                            .filter_map(|cmd| {
-                                match cmd {
-                                    Command::Xrandr(_cmd, args) => Some(args.join(" ")),
-                                    Command::MoveWorkspace { .. } => None,
-                                }
-                            })
-                            .next()
-                            .unwrap(),
-                        cmd
-                    );
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn mixture() -> Result<(), Error> {
-        let mut connection = i3::MockConnection {
-            fail: false,
-            setting: i3::MockSetting::Mixed,
-        };
-
-        let mut outputs = connection
-            .outputs()?
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<Output>, Error>>()?;
-        outputs.sort();
-
-        let workspaces = Workspaces::convert(
-            connection.workspaces()?,
-            &outputs.iter().collect::<Vec<&Output>>(),
-        )?;
-
-        let workstation: Workstation = outputs[..].try_into()?;
-
-        assert_eq!(
-            workstation,
-            Workstation {
-                laptop: Some(&outputs[0]),
-                externals: Some((&outputs[1], vec![&outputs[2]])),
-                disconnected_externals: vec![],
-            }
-        );
-
-        for (setup, expect) in [
-            (
-                Setup::LaptopLeft,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![
-                            outputs[0].on(),
-                            outputs[1].on(),
-                            outputs[2].on(),
-                        ],
-                        workspace_settings:vec![],
-                    },
-                    "--output eDP-1 --auto --output DP-1 --auto --right-of eDP-1 --output HDMI-1 --auto --right-of DP-1",
-                ),
-            ),
-            (
-                Setup::LaptopRight,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![
-                            outputs[1].on(),
-                            outputs[2].on(),
-                            outputs[0].on(),
-                        ],
-                        workspace_settings:vec![],
-                    },
-                    "--output DP-1 --auto --output HDMI-1 --auto --right-of DP-1 --output eDP-1 --auto --right-of HDMI-1",
-                ),
-            ),
-            (
-                Setup::LaptopOnly,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![
-                            outputs[0].on(),
-                            outputs[1].off(),
-                            outputs[2].off(),
-                        ],
-                        workspace_settings:vec![],
-                    },
-                    "--output eDP-1 --auto --output DP-1 --off --output HDMI-1 --off",
-                ),
-            ),
-            (
-                Setup::ExternalOnly,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![
-                            outputs[1].on(),
-                            outputs[2].on(),
-                            outputs[0].off(),
-                        ],
-                        workspace_settings:vec![],
-                    },
-                    "--output DP-1 --auto --output HDMI-1 --auto --right-of DP-1 --output eDP-1 --off",
-                ),
-            ),
-        ] {
-            let result = workstation.plan(setup, &workspaces);
-            match expect {
-                PlanExpect::Error => assert!(result.is_err()),
-                PlanExpect::Valid(plan, cmd) => {
-                    assert_eq!(result?.output_settings, plan.output_settings);
-                    assert_eq!(
-                        plan.commands()
-                            .into_iter()
-                            .filter_map(|cmd| {
-                                match cmd {
-                                    Command::Xrandr(_cmd, args) => {
-                                        Some(args.join(" "))
-                                    }
-                                    Command::MoveWorkspace { .. } => None,
-                                }
-                            })
-                            .next()
-                            .unwrap(),
-                        cmd
-                    );
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
