@@ -332,10 +332,10 @@ struct Plan<'ws, 'out> {
 impl fmt::Display for Plan<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for output in &self.output_settings {
-            write!(f, "{output}")?;
+            writeln!(f, "{output}")?;
         }
         for workspace in &self.workspace_settings {
-            write!(f, "{workspace}")?;
+            writeln!(f, "{workspace}")?;
         }
         Ok(())
     }
@@ -888,14 +888,12 @@ fn run() -> Result<(), Error> {
 
     if args.debug {
         println!("{plan}");
-        println!();
     }
     if args.diagram {
         let mut buf = String::new();
         plan.diagram(&mut buf)?;
 
-        println!("{buf}");
-        println!();
+        println!("{buf}\n");
     }
 
     let commands = if args.dry_run {
