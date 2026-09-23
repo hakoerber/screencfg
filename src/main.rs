@@ -1,6 +1,6 @@
-use std::{path::PathBuf, process};
+use std::{path::PathBuf, process, time::Duration};
 
-use i3::Conn as _;
+use i3::{Conn as _, EventType};
 
 mod cli;
 mod config;
@@ -182,6 +182,7 @@ fn manage_screens(
     Ok(())
 }
 
+#[expect(clippy::print_stderr, reason = "main")]
 fn run() -> Result<(), Error> {
     let args = cli::Cli::parse();
 
@@ -198,8 +199,31 @@ fn run() -> Result<(), Error> {
                 set_options.custom_external_ordering.as_deref(),
             )?;
         }
-        cli::Cmd::Watch(_watch_options) => {
-            unimplemented!()
+        cli::Cmd::Watch(watch_options) => {
+            let config = config::find(args.config.map(|path| PathBuf::from(path)).as_deref())?;
+
+            let i3_connection = i3::connect()?;
+
+            let Err(err) = i3::start_event_listener::<_, Error>(
+                i3_connection,
+                Duration::from_millis(1000),
+                &[EventType::Output, EventType::Workspace],
+                |event| {
+                    eprintln!("received event from i3: {event}");
+                    manage_screens(
+                        config.as_ref(),
+                        args.debug,
+                        watch_options.dry_run,
+                        watch_options.diagram,
+                        watch_options.setup,
+                        watch_options.custom_external_ordering.as_deref(),
+                    )?;
+
+                    Ok::<(), Error>(())
+                },
+            );
+
+            eprintln!("{err}");
         }
     }
 

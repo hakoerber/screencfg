@@ -44,8 +44,13 @@ pub enum Error {
         expected: ResponseType,
         received: ResponseType,
     },
-    #[error("unknown response command: {id}")]
-    UnknownResponseCommand { id: u32 },
+    #[error("unknown response command (event {event}): {id}")]
+    UnknownResponseCommand { id: u32, event: bool },
+    #[error("error response from {response_type}: {msg}")]
+    ErrorResponse {
+        response_type: ResponseType,
+        msg: Msg,
+    },
     #[error("command failed: {0}")]
     Command(Msg),
     #[error("protocol error: {0}")]

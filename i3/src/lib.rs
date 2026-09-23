@@ -1,5 +1,7 @@
 use std::{
     borrow::Cow,
+    collections::{HashMap, hash_map::Entry},
+    convert::Infallible,
     ffi::OsStr,
     fmt,
     io::{Read, Write},
@@ -7,12 +9,15 @@ use std::{
     os::unix::{ffi::OsStrExt as _, net},
     path::PathBuf,
     process,
-    time::Duration,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
     vec::IntoIter,
 };
 
 mod error;
 pub use error::Error;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy)]
 pub struct WorkspaceNumber(usize);
@@ -110,6 +115,12 @@ pub trait Conn {
     fn outputs(&mut self) -> Result<Outputs, Error>;
     fn workspaces(&mut self) -> Result<Workspaces, Error>;
     fn command(&mut self, command: Command<'_>) -> Result<(), Error>;
+    fn subscribe(
+        &mut self,
+        sender: mpsc::SyncSender<Result<EventPayload, Error>>,
+        debounce_time: Duration,
+        event_types: &[EventType],
+    ) -> Result<Infallible, Error>;
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -298,6 +309,19 @@ impl Conn for MockConnection {
         self.check_fail()?;
         Ok(())
     }
+
+    #[expect(clippy::infinite_loop, reason = "it's infallible")]
+    fn subscribe(
+        &mut self,
+        sender: mpsc::SyncSender<Result<EventPayload, Error>>,
+        debounce_time: Duration,
+        _event_types: &[EventType],
+    ) -> Result<Infallible, Error> {
+        loop {
+            sender.send(Ok(EventPayload::Output)).expect("channel open");
+            thread::sleep(debounce_time);
+        }
+    }
 }
 
 pub struct Connection(net::UnixStream);
@@ -310,12 +334,14 @@ impl Conn for Connection {
 
         match response {
             Response::Version(version) => Ok(version.into()),
-            Response::Workspaces(_) | Response::Command(_) | Response::Outputs(_) => {
-                Err(Error::UnexpectedResponse {
-                    expected: ResponseType::Version,
-                    received: response.into(),
-                })
-            }
+            Response::Workspaces(_)
+            | Response::Command(_)
+            | Response::Outputs(_)
+            | Response::Subscription(_)
+            | Response::SubscriptionEvent(_) => Err(Error::UnexpectedResponse {
+                expected: ResponseType::Version,
+                received: response.into(),
+            }),
         }
     }
 
@@ -325,12 +351,14 @@ impl Conn for Connection {
 
         match response {
             Response::Outputs(outputs) => Ok(outputs.into()),
-            Response::Version(_) | Response::Workspaces(_) | Response::Command(_) => {
-                Err(Error::UnexpectedResponse {
-                    expected: ResponseType::Outputs,
-                    received: response.into(),
-                })
-            }
+            Response::Version(_)
+            | Response::Workspaces(_)
+            | Response::Command(_)
+            | Response::Subscription(_)
+            | Response::SubscriptionEvent(_) => Err(Error::UnexpectedResponse {
+                expected: ResponseType::Outputs,
+                received: response.into(),
+            }),
         }
     }
 
@@ -341,12 +369,14 @@ impl Conn for Connection {
 
         match response {
             Response::Workspaces(workspaces) => Ok(workspaces.into()),
-            Response::Version(_) | Response::Command(_) | Response::Outputs(_) => {
-                Err(Error::UnexpectedResponse {
-                    expected: ResponseType::Workspaces,
-                    received: response.into(),
-                })
-            }
+            Response::Version(_)
+            | Response::Command(_)
+            | Response::Outputs(_)
+            | Response::Subscription(_)
+            | Response::SubscriptionEvent(_) => Err(Error::UnexpectedResponse {
+                expected: ResponseType::Workspaces,
+                received: response.into(),
+            }),
         }
     }
 
@@ -367,11 +397,89 @@ impl Conn for Connection {
                 }
                 Ok(())
             }
-            Response::Version(_) | Response::Workspaces(_) | Response::Outputs(_) => {
-                Err(Error::UnexpectedResponse {
-                    expected: ResponseType::Command,
+            Response::Version(_)
+            | Response::Workspaces(_)
+            | Response::Outputs(_)
+            | Response::Subscription(_)
+            | Response::SubscriptionEvent(_) => Err(Error::UnexpectedResponse {
+                expected: ResponseType::Command,
+                received: response.into(),
+            }),
+        }
+    }
+
+    fn subscribe(
+        &mut self,
+        sender: mpsc::SyncSender<Result<EventPayload, Error>>,
+        debounce_time: Duration,
+        event_types: &[EventType],
+    ) -> Result<Infallible, Error> {
+        Message::Subscribe(event_types).send(self)?;
+
+        let response = Response::read(self)?;
+
+        match response {
+            Response::Version(_)
+            | Response::Workspaces(_)
+            | Response::Command(_)
+            | Response::Outputs(_)
+            | Response::SubscriptionEvent(_) => {
+                return Err(Error::UnexpectedResponse {
+                    expected: ResponseType::Subscription,
                     received: response.into(),
-                })
+                });
+            }
+            Response::Subscription(subscription_response) => {
+                if !subscription_response.success {
+                    return Err(Error::ErrorResponse {
+                        response_type: ResponseType::Subscription,
+                        msg: match subscription_response.error {
+                            Some(message) => message.into(),
+                            None => "no error message".into(),
+                        },
+                    });
+                }
+            }
+        }
+
+        // disable timeout so reads block
+        self.0.set_read_timeout(None)?;
+
+        let mut event_timestamps: HashMap<EventPayloadType, Instant> = HashMap::new();
+
+        loop {
+            let response = Response::read(self)?;
+
+            match response {
+                Response::Version(_)
+                | Response::Workspaces(_)
+                | Response::Command(_)
+                | Response::Outputs(_)
+                | Response::Subscription(_) => sender
+                    .send(Err(Error::UnexpectedResponse {
+                        expected: ResponseType::SubscriptionEvent,
+                        received: response.into(),
+                    }))
+                    .expect("channel open"),
+                Response::SubscriptionEvent(event_payload) => {
+                    let now = Instant::now();
+
+                    let event_type: EventPayloadType = event_payload.clone().into();
+
+                    // only emit event if there has been no event during `debounce_time`
+                    match event_timestamps.entry(event_type) {
+                        Entry::Occupied(mut entry) => {
+                            if now.duration_since(*entry.get()) > debounce_time {
+                                sender.send(Ok(event_payload)).expect("channel open");
+                                let _: Instant = entry.insert(now);
+                            }
+                        }
+                        Entry::Vacant(entry) => {
+                            sender.send(Ok(event_payload)).expect("channel open");
+                            let _: &mut Instant = entry.insert(now);
+                        }
+                    }
+                }
             }
         }
     }
@@ -404,6 +512,51 @@ pub fn connect() -> Result<Connection, Error> {
     stream.set_read_timeout(Some(Duration::from_millis(100)))?;
 
     Ok(Connection(stream))
+}
+
+/// This takes ownership of connection because event handling
+/// should have a separate connection, as it fucks with request ordering
+///
+/// <https://i3wm.org/docs/ipc.html#_events>
+///
+/// > As soon as you subscribe to an event, it is not guaranteed any longer
+/// > that the requests to i3 are processed in order. This means, the
+/// > following situation can happen: You send a GET_WORKSPACES request
+/// > but you receive a "workspace" event before receiving the reply to
+/// > GET_WORKSPACES. If your program does not want to cope which such kinds
+/// > of race conditions (an event based library may not have a problem here),
+/// > I suggest you create a separate connection to receive events.
+pub fn start_event_listener<F, E>(
+    mut connection: Connection,
+    debounce_time: Duration,
+    event_types: &[EventType],
+    handler: F,
+) -> Result<Infallible, E>
+where
+    F: Fn(EventPayload) -> Result<(), E> + Send,
+    E: From<Error> + Send,
+{
+    let (tx, rx) = mpsc::sync_channel(0);
+
+    thread::scope(|scope| -> Result<(), E> {
+        let event_subscriber =
+            scope.spawn(move || connection.subscribe(tx, debounce_time, event_types));
+
+        let event_handler = scope.spawn(move || -> Result<(), E> {
+            for event in rx {
+                handler(event?)?;
+            }
+
+            Ok(())
+        });
+
+        event_handler.join().expect("thread to not panic")?;
+        let Err(err) = event_subscriber.join().expect("thread to not panic");
+
+        Err(err.into())
+    })?;
+
+    unreachable!()
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -523,8 +676,17 @@ impl Index<usize> for Outputs {
     }
 }
 
-enum Message<'out> {
-    Command(Command<'out>),
+#[derive(Serialize)]
+pub enum EventType {
+    #[serde(rename = "output")]
+    Output,
+    #[serde(rename = "workspace")]
+    Workspace,
+}
+
+enum Message<'input> {
+    Command(Command<'input>),
+    Subscribe(&'input [EventType]),
     Workspaces,
     Outputs,
     Version,
@@ -534,6 +696,7 @@ impl From<Message<'_>> for u32 {
     fn from(value: Message<'_>) -> Self {
         match value {
             Message::Command(_) => 0,
+            Message::Subscribe(_) => 2,
             Message::Workspaces => 1,
             Message::Outputs => 3,
             Message::Version => 7,
@@ -545,6 +708,11 @@ impl Message<'_> {
     fn bytes(self) -> Result<Vec<u8>, Error> {
         let payload: Option<Cow<'static, str>> = match self {
             Self::Command(ref command) => Some(command.into()),
+            Self::Subscribe(ref event_types) => Some(
+                serde_json::to_string(event_types)
+                    .expect("serializing static values always succeeds")
+                    .into(),
+            ),
             Self::Workspaces | Self::Outputs | Self::Version => None,
         };
 
@@ -641,6 +809,41 @@ impl From<WorkspacePayload> for Workspace {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct EventPayloadWorkspace {
+    pub change: String,
+}
+
+impl fmt::Display for EventPayloadWorkspace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "change: {}", self.change)
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SubscriptionPayload {
+    success: bool,
+    error: Option<String>,
+}
+
+#[derive(Debug, strum::EnumDiscriminants, Clone)]
+#[strum_discriminants(derive(Hash), name(EventPayloadType))]
+pub enum EventPayload {
+    Output,
+    Workspace(EventPayloadWorkspace),
+}
+
+impl fmt::Display for EventPayload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Output => write!(f, "Output"),
+            Self::Workspace(ref event_payload_workspace) => {
+                write!(f, "Workspace({event_payload_workspace})")
+            }
+        }
+    }
+}
+
 #[derive(Debug, strum::EnumDiscriminants)]
 #[strum_discriminants(derive(strum::Display), vis(pub), name(ResponseType))]
 enum Response {
@@ -648,6 +851,8 @@ enum Response {
     Workspaces(Vec<WorkspacePayload>),
     Command(Vec<CommandPayload>),
     Outputs(Vec<OutputPayload>),
+    Subscription(SubscriptionPayload),
+    SubscriptionEvent(EventPayload),
 }
 
 impl Response {
@@ -701,12 +906,32 @@ impl Response {
 
         stream.0.read_exact(&mut response)?;
 
-        match response_command {
-            0 => Ok(Self::Command(serde_json::from_slice(&response)?)),
-            1 => Ok(Self::Workspaces(serde_json::from_slice(&response)?)),
-            3 => Ok(Self::Outputs(serde_json::from_slice(&response)?)),
-            7 => Ok(Self::Version(serde_json::from_slice(&response)?)),
-            id => Err(Error::UnknownResponseCommand { id }),
+        // highest bit indicates event response
+        if response_command >> 31 == 1 {
+            let response_command = response_command & !(1 << 31);
+            Ok(Self::SubscriptionEvent(match response_command {
+                0 => EventPayload::Workspace(serde_json::from_slice(&response)?),
+                1 => {
+                    #[derive(Debug, serde::Deserialize)]
+                    struct EventResponseOutput {
+                        change: String,
+                    }
+
+                    let response: EventResponseOutput = serde_json::from_slice(&response)?;
+                    assert_eq!(response.change, "unspecified", "this is a static response");
+                    EventPayload::Output
+                }
+                id => return Err(Error::UnknownResponseCommand { id, event: true }),
+            }))
+        } else {
+            match response_command {
+                0 => Ok(Self::Command(serde_json::from_slice(&response)?)),
+                1 => Ok(Self::Workspaces(serde_json::from_slice(&response)?)),
+                2 => Ok(Self::Subscription(serde_json::from_slice(&response)?)),
+                3 => Ok(Self::Outputs(serde_json::from_slice(&response)?)),
+                7 => Ok(Self::Version(serde_json::from_slice(&response)?)),
+                id => Err(Error::UnknownResponseCommand { id, event: false }),
+            }
         }
     }
 }

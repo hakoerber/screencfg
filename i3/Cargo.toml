@@ -3,6 +3,10 @@ name = "i3"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "i3-msg"
+path = "src/bin.rs"
+
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }

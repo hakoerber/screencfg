@@ -67,7 +67,4 @@ pub(crate) struct WatchOptions {
 
     #[arg(long)]
     pub(crate) diagram: bool,
-
-    #[arg(long)]
-    pub(crate) once: bool,
 }
