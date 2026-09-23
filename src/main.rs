@@ -122,6 +122,7 @@ impl<'out> Output {
         let i3_outputs = i3
             .outputs()?
             .into_iter()
+            .filter(|output| output.active)
             .map(TryInto::try_into)
             .collect::<Result<Vec<Self>, Error>>()?;
 
