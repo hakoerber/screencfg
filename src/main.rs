@@ -48,7 +48,7 @@ impl OutputClass {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OutputConnectionState {
     Connected,
     Disconnected,
@@ -765,7 +765,7 @@ impl TryFrom<xrandr::Output> for Output {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 enum Setup {
     LaptopLeft,
     LaptopRight,
@@ -784,6 +784,12 @@ impl From<cli::Setup> for Setup {
             cli::Setup::Projector => Self::Projector,
         }
     }
+}
+
+#[derive(Debug)]
+enum ExternalOrdering {
+    Default,
+    Custom { order: Vec<usize> },
 }
 
 const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";

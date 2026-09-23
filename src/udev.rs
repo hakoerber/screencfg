@@ -51,13 +51,13 @@ pub(crate) struct EventListener {
     socket: udev::MonitorSocket,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub(crate) enum Subsystem {
     Drm,
 }
 
 impl Subsystem {
-    fn as_str(self) -> &'static str {
+    fn as_str(&self) -> &'static str {
         match self {
             Subsystem::Drm => "drm",
         }
