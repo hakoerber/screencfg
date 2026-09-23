@@ -47,19 +47,38 @@ impl fmt::Debug for Event {
     }
 }
 
+impl fmt::Display for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: {} {} (subsystem={}, sysname={}, devtype={})",
+            self.0.sequence_number(),
+            self.0.event_type(),
+            self.0.syspath().to_str().unwrap_or("---"),
+            self.0
+                .subsystem()
+                .map_or("", |s| { s.to_str().unwrap_or("") }),
+            self.0.sysname().to_str().unwrap_or(""),
+            self.0
+                .devtype()
+                .map_or("", |s| { s.to_str().unwrap_or("") })
+        )
+    }
+}
+
 pub(crate) struct EventListener {
     socket: udev::MonitorSocket,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub(crate) enum Subsystem {
     Drm,
 }
 
 impl Subsystem {
-    fn as_str(&self) -> &'static str {
+    fn as_str(self) -> &'static str {
         match self {
-            Subsystem::Drm => "drm",
+            Self::Drm => "drm",
         }
     }
 }
@@ -78,7 +97,7 @@ pub(crate) struct EventStream {
     listener: EventListener,
     poll: mio::Poll,
     events: mio::Events,
-    token: mio::Token,
+    token: Token,
 }
 
 impl EventStream {
@@ -104,7 +123,7 @@ impl EventStream {
         debounce_duration: time::Duration,
     ) -> E
     where
-        F: Fn(udev::EventType) -> bool + Send + 'a,
+        F: Fn(EventType) -> bool + Send + 'a,
         H: Fn(Event) -> Result<(), E> + Send + 'static,
         E: Send + 'static,
     {
@@ -117,7 +136,7 @@ impl EventStream {
                 // then trigger the configuration.
                 let debouncer = debounce::EventDebouncer::new(debounce_duration, move |event| {
                     if let Err(err) = handler(event) {
-                        result_tx.send(err).unwrap();
+                        result_tx.send(err).expect("sending to succeed");
                     }
                 });
                 for event in event_rx {
@@ -135,7 +154,7 @@ impl EventStream {
                         if event.token() == self.token && event.is_writable() {
                             for event in self.listener.socket.iter() {
                                 if filter(event.event_type()) {
-                                    event_tx.send(Event(event)).unwrap();
+                                    event_tx.send(Event(event)).expect("sending to succeed");
                                 }
                             }
                         }
@@ -143,7 +162,7 @@ impl EventStream {
                 }
             });
 
-            result_rx.recv().unwrap()
+            result_rx.recv().expect("receiving to succeed")
         })
     }
 }

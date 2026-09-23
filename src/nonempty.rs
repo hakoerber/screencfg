@@ -30,13 +30,13 @@ impl<T> Eq for NonEmptyVec<T> where T: Eq {}
 
 impl<T> NonEmptyVec<T> {
     pub fn new(mut from: Vec<T>) -> Self {
-        assert!(!from.is_empty());
+        assert!(!from.is_empty(), "creating nonempty vec from empty vec");
         let first = from.remove(0);
         Self { first, rest: from }
     }
 
     pub fn len(&self) -> usize {
-        self.rest.len() + 1
+        self.rest.len().checked_add(1).expect("vec at capacity")
     }
 
     pub fn first(&self) -> &T {
@@ -46,11 +46,13 @@ impl<T> NonEmptyVec<T> {
     pub fn get(&self, index: usize) -> Option<&T> {
         match index {
             0 => Some(&self.first),
-            i => self.rest.get(i - 1),
+            i => self
+                .rest
+                .get(i.checked_sub(1).expect("checked for index 0 above")),
         }
     }
 
-    pub fn iter<'a>(&'a self) -> IntoIterRef<'a, T> {
+    pub fn iter(&self) -> IntoIterRef<'_, T> {
         self.into_iter()
     }
 }

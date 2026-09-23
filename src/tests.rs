@@ -1,4 +1,3 @@
-
 use super::*;
 
 enum PlanExpect<'cmd, 'ws, 'out> {
@@ -25,7 +24,7 @@ fn single_laptop() -> Result<(), Error> {
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
 
-    let workstation: Workstation = outputs[..].try_into()?;
+    let workstation: Workstation<'_> = outputs[..].try_into()?;
 
     assert_eq!(
         &workstation,
@@ -92,7 +91,7 @@ fn multiple_laptops() -> Result<(), Error> {
 
     let outputs = [laptop1, laptop2];
 
-    let workstation: Result<Workstation, Error> = outputs[..].try_into();
+    let workstation: Result<Workstation<'_>, Error> = outputs[..].try_into();
 
     assert!(workstation.is_err());
 
@@ -103,7 +102,7 @@ fn multiple_laptops() -> Result<(), Error> {
 fn no_screens() -> Result<(), Error> {
     let outputs = [];
 
-    let workstation: Result<Workstation, Error> = outputs[..].try_into();
+    let workstation: Result<Workstation<'_>, Error> = outputs[..].try_into();
 
     assert!(workstation.is_err());
 
@@ -129,7 +128,7 @@ fn single_external() -> Result<(), Error> {
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
 
-    let workstation: Workstation = outputs[..].try_into()?;
+    let workstation: Workstation<'_> = outputs[..].try_into()?;
 
     assert_eq!(
         workstation,
@@ -199,7 +198,7 @@ fn multiple_external() -> Result<(), Error> {
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
 
-    let workstation: Workstation = outputs[..].try_into()?;
+    let workstation: Workstation<'_> = outputs[..].try_into()?;
 
     assert_eq!(
         workstation,
@@ -310,7 +309,7 @@ fn mixture() -> Result<(), Error> {
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
 
-    let workstation: Workstation = outputs[..].try_into()?;
+    let workstation: Workstation<'_> = outputs[..].try_into()?;
 
     assert_eq!(
         workstation,

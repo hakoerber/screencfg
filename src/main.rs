@@ -70,9 +70,9 @@ impl fmt::Display for OutputConnectionState {
         write!(
             f,
             "{}",
-            match self {
-                OutputConnectionState::Connected => "connected",
-                OutputConnectionState::Disconnected => "disconnected",
+            match *self {
+                Self::Connected => "connected",
+                Self::Disconnected => "disconnected",
             }
         )
     }
@@ -93,9 +93,10 @@ impl fmt::Display for Output {
 
 impl<'out> Output {
     fn on(&'out self) -> OutputSetting<'out> {
-        if self.connection_state != OutputConnectionState::Connected {
-            panic!("tried to activate disconnected output")
-        }
+        assert!(
+            self.connection_state == OutputConnectionState::Connected,
+            "tried to activate disconnected output"
+        );
         OutputSetting {
             output: self,
             state: OutputState::Connected(OutputActiveState::On),
@@ -221,7 +222,7 @@ impl fmt::Display for OutputActiveState {
         write!(
             f,
             "{}",
-            match self {
+            match *self {
                 Self::On => "on",
                 Self::Off => "off",
             }
@@ -241,7 +242,7 @@ impl fmt::Display for OutputState {
             f,
             "{}",
             match *self {
-                Self::Connected(ref active_state) => format!("connected({})", active_state),
+                Self::Connected(ref active_state) => format!("connected({active_state})"),
                 Self::Disconnected => "disconnected".to_owned(),
             }
         )
@@ -286,7 +287,7 @@ impl<'out> Workspaces<'out> {
                             })?,
                     })
                 })
-                .collect::<Result<Vec<Workspace>, Error>>()?,
+                .collect::<Result<Vec<Workspace<'_>>, Error>>()?,
         ))
     }
 }
@@ -351,7 +352,7 @@ impl fmt::Display for Command<'_, '_> {
     }
 }
 
-impl<'ws, 'out> Plan<'ws, 'out> {
+impl<'out> Plan<'_, 'out> {
     fn diagram(&self, f: &mut impl fmt::Write) -> fmt::Result {
         let active_outputs = self
             .output_settings
@@ -409,7 +410,7 @@ impl<'ws, 'out> Plan<'ws, 'out> {
         let mut commands = vec![];
         let mut args = vec![];
 
-        let mut left: Option<&OutputSetting> = None;
+        let mut left: Option<&OutputSetting<'_>> = None;
 
         for setting in &self.output_settings {
             args.push("--output");
@@ -425,9 +426,9 @@ impl<'ws, 'out> Plan<'ws, 'out> {
                     left = Some(setting);
                 }
                 OutputState::Connected(OutputActiveState::Off) | OutputState::Disconnected => {
-                    args.push("--off")
+                    args.push("--off");
                 }
-            };
+            }
         }
 
         commands.push(Command::Xrandr("xrandr".into(), args));
@@ -478,9 +479,9 @@ impl<'ws, 'out> Plan<'ws, 'out> {
         // apply the workspace moves again. this may be necessary because i3 auto-assigns a new workspace
         // when activating a new output. this new workspace may actually belong to a different output.
         for command in &commands {
-            if let Command::MoveWorkspace { num, output } = command {
+            if let Command::MoveWorkspace { num, output } = *command {
                 i3.command(i3::Command::MoveWorkspace {
-                    id: *num,
+                    id: num,
                     output: output.name.clone(),
                 })?;
             }
@@ -504,11 +505,7 @@ impl<'ws, 'out> Workstation<'out> {
                     None => vec![],
                     Some(externals) => externals.iter().map(|ext| ext.off()).collect(),
                 });
-                outputs.extend(
-                    disconnected_externals
-                        .into_iter()
-                        .map(|output| output.off()),
-                );
+                outputs.extend(disconnected_externals.into_iter().map(Output::off));
                 outputs
             },
             workspace_settings: workspaces
@@ -531,9 +528,9 @@ impl<'ws, 'out> Workstation<'out> {
         external_ordering: &ExternalOrdering,
     ) -> Result<Plan<'ws, 'out>, Error> {
         // shuffle around if required
-        let externals = match external_ordering {
+        let externals = match *external_ordering {
             ExternalOrdering::Default => externals,
-            ExternalOrdering::Custom { order } => {
+            ExternalOrdering::Custom { ref order } => {
                 let mut out = Vec::with_capacity(externals.len());
                 assert_eq!(
                     order.len(),
@@ -544,9 +541,9 @@ impl<'ws, 'out> Workstation<'out> {
                 for order in order {
                     out.push(
                         *externals
-                            .get(order - 1)
+                            .get(order.checked_sub(1).expect("order is always positive"))
                             .expect("order contains incrementing integers"),
-                    )
+                    );
                 }
 
                 &NonEmptyVec::new(out)
@@ -560,11 +557,7 @@ impl<'ws, 'out> Workstation<'out> {
                 if let Some(laptop) = laptop {
                     outputs.push(laptop.off());
                 }
-                outputs.extend(
-                    disconnected_externals
-                        .into_iter()
-                        .map(|output| output.off()),
-                );
+                outputs.extend(disconnected_externals.into_iter().map(Output::off));
                 outputs
             },
             workspace_settings: {
@@ -678,9 +671,9 @@ impl<'ws, 'out> Workstation<'out> {
                     };
 
                     // shuffle around if required
-                    let externals = match external_ordering {
+                    let externals = match *external_ordering {
                         ExternalOrdering::Default => externals,
-                        ExternalOrdering::Custom { order } => {
+                        ExternalOrdering::Custom { ref order } => {
                             let mut out = Vec::with_capacity(externals.len());
                             assert_eq!(
                                 order.len(),
@@ -691,9 +684,11 @@ impl<'ws, 'out> Workstation<'out> {
                             for order in order {
                                 out.push(
                                     *externals
-                                        .get(order - 1)
+                                        .get(
+                                            order.checked_sub(1).expect("order is always positive"),
+                                        )
                                         .expect("order contains incrementing integers"),
-                                )
+                                );
                             }
 
                             &NonEmptyVec::new(out)
@@ -703,7 +698,7 @@ impl<'ws, 'out> Workstation<'out> {
                     let workspace_settings =
                         Self::distribute_workspaces(workspaces, laptop, externals)?;
 
-                    let mut output_settings: Vec<OutputSetting> =
+                    let mut output_settings: Vec<OutputSetting<'_>> =
                         externals.into_iter().map(|ext| ext.on()).collect();
 
                     output_settings.extend(
@@ -840,7 +835,7 @@ impl ExternalOrdering {
     fn parse_from_str(input: &str, external_output_count: usize) -> Result<Self, Error> {
         let elems = input
             .split(',')
-            .map(|elem| elem.parse::<usize>())
+            .map(str::parse::<usize>)
             .collect::<Result<Vec<usize>, ParseIntError>>()
             .map_err(|err| {
                 Error::Command(format!("could not parse order as integer: {err}").into())
@@ -854,7 +849,7 @@ impl ExternalOrdering {
 
         let sorted = {
             let mut elems = elems.clone();
-            elems.sort();
+            elems.sort_unstable();
             elems
         };
 
@@ -903,6 +898,7 @@ fn find_config(path: Option<String>) -> Result<Option<config::Config>, Error> {
     }
 }
 
+#[expect(clippy::print_stdout, reason = "high level function")]
 fn manage_screens(
     config: Option<&config::Config>,
     debug: bool,
@@ -914,7 +910,7 @@ fn manage_screens(
     let mut i3_connection = i3::connect()?;
 
     let outputs = Output::findall(&mut i3_connection)?;
-    let workstation: Workstation = (&*outputs).try_into()?;
+    let workstation: Workstation<'_> = (&*outputs).try_into()?;
 
     let workspaces = i3_connection.workspaces()?;
     let workspaces = Workspaces::convert(workspaces, &outputs.iter().collect::<Vec<&Output>>())?;
@@ -974,7 +970,7 @@ fn manage_screens(
             .plan(Setup::LaptopLeft, &workspaces, &external_ordering)
             .or_else(|_| workstation.plan(Setup::LaptopOnly, &workspaces, &external_ordering))
             .or_else(|_| workstation.plan(Setup::ExternalOnly, &workspaces, &external_ordering))
-            .map_err(|_| Error::Plan("no plan fit with \"best\" strategy".into()))?
+            .map_err(|_err| Error::Plan("no plan fit with \"best\" strategy".into()))?
     };
 
     if debug {
@@ -1004,7 +1000,7 @@ fn manage_screens(
             println!("executing post command \"{command}\"");
             let output = process::Command::new("bash")
                 .arg("-c")
-                .arg(&command)
+                .arg(command)
                 .output()
                 .map_err(|e| {
                     Error::Generic(
@@ -1029,6 +1025,7 @@ fn manage_screens(
 }
 
 #[expect(clippy::print_stdout, reason = "main")]
+#[expect(clippy::print_stderr, reason = "main")]
 fn run() -> Result<(), Error> {
     let args = cli::Cli::parse();
 
@@ -1045,8 +1042,11 @@ fn run() -> Result<(), Error> {
                 set_options.custom_external_ordering.as_deref(),
             )?;
         }
-        #[allow(unused)]
         cli::Cmd::Watch(watch_options) => {
+            // used to differentiate between multiple event streams / sockets. We only have one, so
+            // we can use any constant value.
+            const TOKEN: mio::Token = mio::Token(0);
+
             let config = find_config(args.config)?;
 
             if watch_options.once {
@@ -1059,12 +1059,6 @@ fn run() -> Result<(), Error> {
                     watch_options.custom_external_ordering.as_deref(),
                 )?;
             }
-
-            // used to differentiate between multiple event streams / sockets. We only have one, so
-            // we can use any constant value.
-            const TOKEN: mio::Token = mio::Token(0);
-
-            let mut events = mio::Events::with_capacity(1024);
 
             let socket = udev::EventListener::new(udev::Subsystem::Drm)?;
 
@@ -1079,7 +1073,7 @@ fn run() -> Result<(), Error> {
                 },
                 move |event| {
                     if args.debug {
-                        println!("Received event: {event:?}");
+                        println!("{event}");
                     }
                     manage_screens(
                         config.as_ref(),
@@ -1100,7 +1094,7 @@ fn run() -> Result<(), Error> {
     Ok(())
 }
 
-#[allow(clippy::print_stderr, reason = "main")]
+#[expect(clippy::print_stderr, reason = "main")]
 fn main() -> process::ExitCode {
     process::ExitCode::from(match run() {
         Ok(()) => 0,

@@ -33,8 +33,12 @@ pub(crate) struct Cli {
 }
 
 impl Cli {
+    #[expect(
+        clippy::same_name_method,
+        reason = "expose parsing without needing to import trait"
+    )]
     pub(crate) fn parse() -> Self {
-        <Self as clap::Parser>::parse()
+        <Self as Parser>::parse()
     }
 }
 

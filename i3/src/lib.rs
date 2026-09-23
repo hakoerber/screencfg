@@ -277,7 +277,7 @@ impl Conn for Connection {
                         return Err(Error::Command(
                             payload
                                 .error
-                                .map_or_else(|| "unknown error".into(), |err| err.into()),
+                                .map_or_else(|| "unknown error".into(), Into::into),
                         ));
                     }
                 }

@@ -23,9 +23,9 @@ impl fmt::Display for Msg {
         write!(
             f,
             "{}",
-            match self {
-                Msg::Owned(s) => s.as_str(),
-                Msg::Static(s) => s,
+            match *self {
+                Self::Owned(ref s) => s.as_str(),
+                Self::Static(s) => s,
             }
         )
     }
