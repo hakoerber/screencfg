@@ -67,11 +67,25 @@ impl From<String> for OutputName {
     }
 }
 
+pub struct OutputNameRef<'a>(&'a String);
+
+impl<'a> OutputNameRef<'a> {
+    pub fn new(value: &'a String) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for OutputNameRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 pub enum Command<'out> {
     Nop,
     MoveWorkspace {
         number: WorkspaceNumber,
-        output: &'out OutputName,
+        output_name: OutputNameRef<'out>,
     },
     Reload,
 }
@@ -80,8 +94,11 @@ impl From<&Command<'_>> for Cow<'static, str> {
     fn from(value: &Command<'_>) -> Self {
         match *value {
             Command::Nop => Cow::from("nop"),
-            Command::MoveWorkspace { number: id, output } => Cow::from(format!(
-                "[workspace=\"{id}\"] move workspace to output {output}"
+            Command::MoveWorkspace {
+                number: id,
+                ref output_name,
+            } => Cow::from(format!(
+                "[workspace=\"{id}\"] move workspace to output {output_name}"
             )),
             Command::Reload => Cow::from("reload"),
         }

@@ -45,6 +45,7 @@ thiserror = { workspace = true }
 
 i3 = { path = "./i3" }
 xrandr = { path = "./xrandr" }
+tap = "1.0.1"
 
 [features]
 integration-test = ["i3/integration-test"]

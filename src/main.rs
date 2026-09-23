@@ -7,6 +7,8 @@ use std::{
     process, time,
 };
 
+use tap::prelude::*;
+
 use i3::Conn as _;
 
 mod cli;
@@ -57,7 +59,7 @@ impl OutputClass {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct OutputName(String);
 
 impl OutputName {
@@ -89,6 +91,12 @@ impl From<i3::OutputName> for OutputName {
 impl From<OutputName> for i3::OutputName {
     fn from(value: OutputName) -> Self {
         Self::new(value.into_string())
+    }
+}
+
+impl<'a> From<&'a OutputName> for i3::OutputNameRef<'a> {
+    fn from(value: &'a OutputName) -> Self {
+        Self::new(&value.0)
     }
 }
 
@@ -646,7 +654,7 @@ impl<'out> Plan<'_, 'out> {
         for command in i3_commands {
             i3.command(i3::Command::MoveWorkspace {
                 number: command.num.into(),
-                output: &command.output.name.clone().into(),
+                output_name: (&command.output.name).into(),
             })?;
         }
 
@@ -659,7 +667,7 @@ impl<'ws, 'out> Workstation<'out> {
         workspaces: &'ws Workspaces<'out>,
         laptop: &'out Output,
         externals: Option<&NonEmptyVec<&'out Output>>,
-        disconnected_externals: Vec<&'out Output>,
+        disconnected_externals: &[&'out Output],
     ) -> Plan<'ws, 'out> {
         Plan {
             output_settings: {
@@ -668,7 +676,7 @@ impl<'ws, 'out> Workstation<'out> {
                     None => vec![],
                     Some(externals) => externals.iter().map(|ext| ext.off()).collect(),
                 });
-                outputs.extend(disconnected_externals.into_iter().map(Output::off));
+                outputs.extend(disconnected_externals.iter().map(|output| output.off()));
                 outputs
             },
             workspace_settings: workspaces
@@ -687,7 +695,7 @@ impl<'ws, 'out> Workstation<'out> {
         workspaces: &'ws Workspaces<'out>,
         laptop: Option<&'out Output>,
         externals: &NonEmptyVec<&'out Output>,
-        disconnected_externals: Vec<&'out Output>,
+        disconnected_externals: &[&'out Output],
         external_ordering: &ExternalOrdering,
     ) -> Result<Plan<'ws, 'out>, Error> {
         // shuffle around if required
@@ -720,7 +728,7 @@ impl<'ws, 'out> Workstation<'out> {
                 if let Some(laptop) = laptop {
                     outputs.push(laptop.off());
                 }
-                outputs.extend(disconnected_externals.into_iter().map(Output::off));
+                outputs.extend(disconnected_externals.iter().map(|output| output.off()));
                 outputs
             },
             workspace_settings: {
@@ -921,7 +929,7 @@ impl<'ws, 'out> Workstation<'out> {
                     workspaces,
                     laptop,
                     self.externals.as_ref(),
-                    self.disconnected_externals.clone(),
+                    &self.disconnected_externals,
                 )),
             },
             Setup::ExternalOnly => match self.externals {
@@ -930,7 +938,7 @@ impl<'ws, 'out> Workstation<'out> {
                     workspaces,
                     self.laptop,
                     externals,
-                    self.disconnected_externals.clone(),
+                    &self.disconnected_externals,
                     external_ordering,
                 )?),
             },
@@ -981,6 +989,7 @@ enum Setup {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 enum ExternalOrdering {
     Default,
     Custom { order: Vec<usize> },
@@ -1002,11 +1011,7 @@ impl ExternalOrdering {
             ));
         }
 
-        let sorted = {
-            let mut elems = elems.clone();
-            elems.sort_unstable();
-            elems
-        };
+        let sorted = elems.clone().tap_mut(|f| f.sort_unstable());
 
         if sorted != (1..=(elems.len())).collect::<Vec<usize>>() {
             return Err(Error::Command(
