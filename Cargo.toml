@@ -4,8 +4,7 @@ version.workspace = true
 edition.workspace = true
 description = "Automatically configure your screen setup with i3"
 repository = "https://github.com/hakoerber/screencfg/"
-authors = ["Hannes Körber <hannes@hkoerber.de>"]
-rust-version = "1.85.0"
+rust-version = "1.85.1"
 readme = "README.md"
 license-file = "LICENSE"
 keywords = ["i3", "xrandr"]
@@ -22,23 +21,31 @@ members = ["i3", "xrandr"]
 version = "0.4.0"
 edition = "2024"
 
+[workspace.dependencies]
+serde = { version = "1.*", default-features = false, features = ["derive"] }
+
 [dependencies]
 clap = { version = "4.*", default-features = false, features = [
   "std",
   "derive",
 ] }
-toml = { version = "0.9.*", default-features = false, features = ["parse", "serde"] }
+serde = { workspace = true }
+toml = { version = "1.*", default-features = false, features = [
+  "parse",
+  "serde",
+] }
+udev = { version = "0.9.*", default-features = false, features = [
+  "mio",
+  "send",
+] }
+mio = { version = "1.*", default-features = false, features = ["os-poll"] }
+debounce = { version = "0.2.*", default-features = false }
+
 i3 = { path = "./i3" }
 xrandr = { path = "./xrandr" }
-serde = { version = "1.0.228", default-features = false, features = ["derive"] }
-udev = { version = "0.9.3", default-features = false, features = ["mio", "send"] }
-mio = { version = "1.1.0", default-features = false, features = ["os-poll"] }
-debounce = { version = "0.2.2", default-features = false }
 
 [features]
-integration-test = [
-  "i3/integration-test",
-]
+integration-test = ["i3/integration-test"]
 default = ["full"]
 full = [
   "clap/help",
