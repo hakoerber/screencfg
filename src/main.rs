@@ -845,7 +845,36 @@ fn manage_screens(
     let workspaces = Workspaces::convert(workspaces, &outputs.iter().collect::<Vec<&Output>>())?;
 
     if debug {
-        println!("i3 workspaces:");
+        println!("=== workstation setup:");
+
+        println!("=== laptop output:");
+        match workstation.laptop {
+            Some(output) => {
+                println!(
+                    "{name} ({state})",
+                    name = output.name,
+                    state = output.connection_state
+                );
+            }
+            None => println!("none"),
+        }
+
+        println!("=== external outputs:");
+        match workstation.externals {
+            Some((first, ref rest)) => {
+                let mut outputs = vec![first];
+                outputs.extend(rest);
+                for output in outputs {
+                    println!(
+                        "{name} ({state})",
+                        name = output.name,
+                        state = output.connection_state
+                    );
+                }
+            }
+            None => println!("none"),
+        }
+        println!("=== i3 workspaces:");
         for workspace in &workspaces.0 {
             println!("  - {workspace}");
         }
