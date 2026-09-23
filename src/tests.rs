@@ -1,4 +1,4 @@
-use super::*;
+use super::{nonempty::NonEmptyVec, plan::Command, *};
 
 enum PlanExpect<'cmd, 'ws, 'out> {
     Error,
@@ -19,7 +19,7 @@ fn single_laptop() -> Result<(), Error> {
         .collect::<Result<Vec<Output>, Error>>()?;
     outputs.sort();
 
-    let workspaces = Workspaces::convert(
+    let workspaces = workspace::Workspaces::convert(
         connection.workspaces()?,
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
@@ -86,13 +86,13 @@ fn single_laptop() -> Result<(), Error> {
 #[test]
 fn multiple_laptops() -> Result<(), Error> {
     let laptop1 = Output {
-        name: OutputName("eDP-1".to_owned()),
+        name: OutputName::new("eDP-1".to_owned()),
         class: OutputClass::Laptop,
         connection_state: OutputConnectionState::Connected,
     };
 
     let laptop2 = Output {
-        name: OutputName("eDP-2".to_owned()),
+        name: OutputName::new("eDP-2".to_owned()),
         class: OutputClass::Laptop,
         connection_state: OutputConnectionState::Connected,
     };
@@ -131,7 +131,7 @@ fn single_external() -> Result<(), Error> {
         .collect::<Result<Vec<Output>, Error>>()?;
     outputs.sort();
 
-    let workspaces = Workspaces::convert(
+    let workspaces = workspace::Workspaces::convert(
         connection.workspaces()?,
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
@@ -209,7 +209,7 @@ fn multiple_external() -> Result<(), Error> {
         .collect::<Result<Vec<Output>, Error>>()?;
     outputs.sort();
 
-    let workspaces = Workspaces::convert(
+    let workspaces = workspace::Workspaces::convert(
         connection.workspaces()?,
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
@@ -336,7 +336,7 @@ fn mixture() -> Result<(), Error> {
         .collect::<Result<Vec<Output>, Error>>()?;
     outputs.sort();
 
-    let workspaces = Workspaces::convert(
+    let workspaces = workspace::Workspaces::convert(
         connection.workspaces()?,
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
