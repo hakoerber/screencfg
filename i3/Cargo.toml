@@ -9,3 +9,5 @@ serde_json = { version = "1.*", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true
+[features]
+integration-test = []
