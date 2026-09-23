@@ -4,7 +4,18 @@ mod error;
 
 pub use error::Error;
 
-#[derive(Debug, PartialEq, Eq)]
+pub struct OutputName(String);
+
+impl OutputName {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
 pub enum OutputState {
     Connected,
     Disconnected,
@@ -25,7 +36,7 @@ impl TryFrom<&str> for OutputState {
 }
 
 pub struct Output {
-    pub name: String,
+    pub name: OutputName,
     pub state: OutputState,
 }
 
@@ -46,7 +57,7 @@ impl Output {
             let mut parts = line.split_whitespace();
             match (parts.next(), parts.next()) {
                 (Some(part_1), Some(part_2)) => Ok(Self {
-                    name: part_1.to_owned(),
+                    name: OutputName(part_1.to_owned()),
                     state: part_2.try_into()?,
                 }),
                 _ => Err(Error::Command(format!(

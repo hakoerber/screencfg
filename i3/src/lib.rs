@@ -14,16 +14,75 @@ use std::{
 mod error;
 pub use error::Error;
 
+#[derive(Debug, Clone, Copy)]
+pub struct WorkspaceNumber(usize);
+
+impl WorkspaceNumber {
+    pub fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    pub fn into_inner(self) -> usize {
+        self.0
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct WorkspaceName(String);
+
+impl WorkspaceName {
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Display for WorkspaceNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug)]
+pub struct OutputName(String);
+
+impl OutputName {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Display for OutputName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<String> for OutputName {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 pub enum Command {
     Nop,
-    MoveWorkspace { id: usize, output: String },
+    MoveWorkspace {
+        number: WorkspaceNumber,
+        output: OutputName,
+    },
 }
 
 impl From<&Command> for Cow<'static, str> {
     fn from(value: &Command) -> Self {
         match *value {
             Command::Nop => Cow::from("nop"),
-            Command::MoveWorkspace { id, ref output } => Cow::from(format!(
+            Command::MoveWorkspace {
+                number: id,
+                ref output,
+            } => Cow::from(format!(
                 "[workspace=\"{id}\"] move workspace to output {output}"
             )),
         }
@@ -76,24 +135,24 @@ impl Conn for MockConnection {
         self.check_fail()?;
         match self.setting {
             MockSetting::LaptopOnly => Ok(Outputs(vec![Output {
-                name: "eDP-1".into(),
+                name: OutputName::new("eDP-1".into()),
                 active: true,
                 primary: true,
             }])),
             MockSetting::ExternalOnly(num) => match num {
                 1 => Ok(Outputs(vec![Output {
-                    name: "DP-1".into(),
+                    name: OutputName::new("DP-1".into()),
                     active: true,
                     primary: false,
                 }])),
                 2 => Ok(Outputs(vec![
                     Output {
-                        name: "DP-1".into(),
+                        name: OutputName::new("DP-1".into()),
                         active: true,
                         primary: false,
                     },
                     Output {
-                        name: "DP-2".into(),
+                        name: OutputName::new("DP-2".into()),
                         active: false,
                         primary: false,
                     },
@@ -103,17 +162,17 @@ impl Conn for MockConnection {
             },
             MockSetting::Mixed => Ok(Outputs(vec![
                 Output {
-                    name: "eDP-1".into(),
+                    name: OutputName::new("eDP-1".into()),
                     active: true,
                     primary: true,
                 },
                 Output {
-                    name: "HDMI-1".into(),
+                    name: OutputName::new("HDMI-1".into()),
                     active: true,
                     primary: false,
                 },
                 Output {
-                    name: "DP-1".into(),
+                    name: OutputName::new("DP-1".into()),
                     active: true,
                     primary: false,
                 },
@@ -126,69 +185,69 @@ impl Conn for MockConnection {
         match self.setting {
             MockSetting::LaptopOnly => Ok(Workspaces(vec![
                 Workspace {
-                    num: 1,
-                    name: "num1".into(),
-                    output: "eDP-1".into(),
+                    num: WorkspaceNumber(1),
+                    name: WorkspaceName("num1".into()),
+                    output: OutputName("eDP-1".into()),
                 },
                 Workspace {
-                    num: 1,
-                    name: "num1".into(),
-                    output: "eDP-1".into(),
+                    num: WorkspaceNumber(1),
+                    name: WorkspaceName("num1".into()),
+                    output: OutputName("eDP-1".into()),
                 },
                 Workspace {
-                    num: 1,
-                    name: "num1".into(),
-                    output: "eDP-1".into(),
+                    num: WorkspaceNumber(1),
+                    name: WorkspaceName("num1".into()),
+                    output: OutputName("eDP-1".into()),
                 },
                 Workspace {
-                    num: 1,
-                    name: "num1".into(),
-                    output: "eDP-1".into(),
+                    num: WorkspaceNumber(1),
+                    name: WorkspaceName("num1".into()),
+                    output: OutputName("eDP-1".into()),
                 },
             ])),
             MockSetting::ExternalOnly(num) => match num {
                 1 => Ok(Workspaces(vec![
                     Workspace {
-                        num: 1,
-                        name: "num1".into(),
-                        output: "DP-1".into(),
+                        num: WorkspaceNumber(1),
+                        name: WorkspaceName("num1".into()),
+                        output: OutputName("DP-1".into()),
                     },
                     Workspace {
-                        num: 1,
-                        name: "num1".into(),
-                        output: "DP-1".into(),
+                        num: WorkspaceNumber(1),
+                        name: WorkspaceName("num1".into()),
+                        output: OutputName("DP-1".into()),
                     },
                     Workspace {
-                        num: 1,
-                        name: "num1".into(),
-                        output: "DP-1".into(),
+                        num: WorkspaceNumber(1),
+                        name: WorkspaceName("num1".into()),
+                        output: OutputName("DP-1".into()),
                     },
                     Workspace {
-                        num: 1,
-                        name: "num1".into(),
-                        output: "DP-1".into(),
+                        num: WorkspaceNumber(1),
+                        name: WorkspaceName("num1".into()),
+                        output: OutputName("DP-1".into()),
                     },
                 ])),
                 2 => Ok(Workspaces(vec![
                     Workspace {
-                        num: 1,
-                        name: "num1".into(),
-                        output: "DP-1".into(),
+                        num: WorkspaceNumber(1),
+                        name: WorkspaceName("num1".into()),
+                        output: OutputName("DP-1".into()),
                     },
                     Workspace {
-                        num: 1,
-                        name: "num1".into(),
-                        output: "DP-1".into(),
+                        num: WorkspaceNumber(1),
+                        name: WorkspaceName("num1".into()),
+                        output: OutputName("DP-1".into()),
                     },
                     Workspace {
-                        num: 1,
-                        name: "num1".into(),
-                        output: "DP-2".into(),
+                        num: WorkspaceNumber(1),
+                        name: WorkspaceName("num1".into()),
+                        output: OutputName("DP-2".into()),
                     },
                     Workspace {
-                        num: 1,
-                        name: "num1".into(),
-                        output: "DP-2".into(),
+                        num: WorkspaceNumber(1),
+                        name: WorkspaceName("num1".into()),
+                        output: OutputName("DP-2".into()),
                     },
                 ])),
                 #[expect(clippy::panic, reason = "just a mock")]
@@ -196,24 +255,24 @@ impl Conn for MockConnection {
             },
             MockSetting::Mixed => Ok(Workspaces(vec![
                 Workspace {
-                    num: 1,
-                    name: "num1".into(),
-                    output: "eDP-1".into(),
+                    num: WorkspaceNumber(1),
+                    name: WorkspaceName("num1".into()),
+                    output: OutputName("eDP-1".into()),
                 },
                 Workspace {
-                    num: 1,
-                    name: "num1".into(),
-                    output: "eDP-1".into(),
+                    num: WorkspaceNumber(1),
+                    name: WorkspaceName("num1".into()),
+                    output: OutputName("eDP-1".into()),
                 },
                 Workspace {
-                    num: 1,
-                    name: "num1".into(),
-                    output: "DP-1".into(),
+                    num: WorkspaceNumber(1),
+                    name: WorkspaceName("num1".into()),
+                    output: OutputName("DP-1".into()),
                 },
                 Workspace {
-                    num: 1,
-                    name: "num1".into(),
-                    output: "HDMI-1".into(),
+                    num: WorkspaceNumber(1),
+                    name: WorkspaceName("num1".into()),
+                    output: OutputName("HDMI-1".into()),
                 },
             ])),
         }
@@ -340,7 +399,7 @@ struct OutputPayload {
 
 #[derive(Debug)]
 pub struct Output {
-    pub name: String,
+    pub name: OutputName,
     pub active: bool,
     pub primary: bool,
 }
@@ -361,7 +420,7 @@ impl fmt::Display for Output {
 impl From<OutputPayload> for Output {
     fn from(value: OutputPayload) -> Self {
         Self {
-            name: value.name,
+            name: value.name.into(),
             active: value.active,
             primary: value.primary,
         }
@@ -545,9 +604,9 @@ struct CommandPayload {
 
 #[derive(Debug)]
 pub struct Workspace {
-    pub num: usize,
-    pub name: String,
-    pub output: String,
+    pub num: WorkspaceNumber,
+    pub name: WorkspaceName,
+    pub output: OutputName,
 }
 
 impl fmt::Display for Workspace {
@@ -559,9 +618,9 @@ impl fmt::Display for Workspace {
 impl From<WorkspacePayload> for Workspace {
     fn from(value: WorkspacePayload) -> Self {
         Self {
-            num: value.num,
-            name: value.name,
-            output: value.output,
+            num: WorkspaceNumber(value.num),
+            name: WorkspaceName(value.name),
+            output: OutputName(value.output),
         }
     }
 }

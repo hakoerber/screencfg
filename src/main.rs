@@ -1,4 +1,11 @@
-use std::{env, fmt, num::ParseIntError, path::PathBuf, process, time};
+use std::{
+    env,
+    ffi::OsStr,
+    fmt,
+    num::ParseIntError,
+    path::{Path, PathBuf},
+    process, time,
+};
 
 use i3::Conn as _;
 
@@ -34,12 +41,12 @@ impl fmt::Display for OutputClass {
 }
 
 impl OutputClass {
-    fn try_detect(value: &str) -> Result<Self, Error> {
-        if value.starts_with("eDP-") {
+    fn try_detect(value: &OutputName) -> Result<Self, Error> {
+        if value.as_str().starts_with("eDP-") {
             Ok(Self::Laptop)
-        } else if value.starts_with("DP-")
-            || value.starts_with("HDMI-")
-            || value.starts_with("DisplayPort-")
+        } else if value.as_str().starts_with("DP-")
+            || value.as_str().starts_with("HDMI-")
+            || value.as_str().starts_with("DisplayPort-")
         {
             Ok(Self::External)
         } else {
@@ -47,6 +54,47 @@ impl OutputClass {
                 format!("could not classify output: {value}").into(),
             ))
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+struct OutputName(String);
+
+impl OutputName {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn into_string(self) -> String {
+        self.0
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl From<xrandr::OutputName> for OutputName {
+    fn from(value: xrandr::OutputName) -> Self {
+        Self(value.into_string())
+    }
+}
+
+impl From<i3::OutputName> for OutputName {
+    fn from(value: i3::OutputName) -> Self {
+        Self(value.into_string())
+    }
+}
+
+impl From<OutputName> for i3::OutputName {
+    fn from(value: OutputName) -> Self {
+        Self::new(value.into_string())
+    }
+}
+
+impl fmt::Display for OutputName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -81,7 +129,7 @@ impl fmt::Display for OutputConnectionState {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Output {
     class: OutputClass,
-    name: String,
+    name: OutputName,
     connection_state: OutputConnectionState,
 }
 
@@ -270,17 +318,18 @@ impl<'out> Workspaces<'out> {
             workspaces
                 .into_iter()
                 .map(|from| {
+                    let output_name_from_i3_workspaces: OutputName = from.output.into();
                     Ok(Workspace {
-                        num: from.num,
-                        name: from.name,
+                        num: from.num.into(),
+                        name: from.name.into(),
                         output: outputs
                             .iter()
-                            .find(|output| from.output == output.name)
+                            .find(|output| output_name_from_i3_workspaces == output.name)
                             .ok_or_else(|| {
                                 Error::Generic(
                                     format!(
                                         "output of workspace {} ({}) not found in i3 outputs",
-                                        from.num, from.output
+                                        from.num, output_name_from_i3_workspaces
                                     )
                                     .into(),
                                 )
@@ -293,9 +342,45 @@ impl<'out> Workspaces<'out> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+struct WorkspaceName(String);
+
+impl fmt::Display for WorkspaceName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<i3::WorkspaceName> for WorkspaceName {
+    fn from(value: i3::WorkspaceName) -> Self {
+        Self(value.into_inner())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+struct WorkspaceNumber(usize);
+
+impl fmt::Display for WorkspaceNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<WorkspaceNumber> for i3::WorkspaceNumber {
+    fn from(value: WorkspaceNumber) -> Self {
+        Self::new(value.0)
+    }
+}
+
+impl From<i3::WorkspaceNumber> for WorkspaceNumber {
+    fn from(value: i3::WorkspaceNumber) -> Self {
+        Self(value.into_inner())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 struct Workspace<'out> {
-    num: usize,
-    name: String,
+    num: WorkspaceNumber,
+    name: WorkspaceName,
     output: &'out Output,
 }
 
@@ -336,15 +421,62 @@ impl fmt::Display for Plan<'_, '_> {
 }
 
 #[derive(Debug)]
+struct Program(&'static str);
+
+impl AsRef<OsStr> for Program {
+    fn as_ref(&self) -> &OsStr {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Display for Program {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug)]
+struct Arg<'a>(&'a str);
+
+impl AsRef<OsStr> for Arg<'_> {
+    fn as_ref(&self) -> &OsStr {
+        self.0.as_ref()
+    }
+}
+
+impl Arg<'_> {
+    fn as_str(&self) -> &str {
+        self.0
+    }
+}
+
+#[derive(Debug)]
 enum Command<'out, 'args> {
-    Xrandr(String, Vec<&'args str>),
-    MoveWorkspace { num: usize, output: &'out Output },
+    Xrandr {
+        program: Program,
+        args: Vec<Arg<'args>>,
+    },
+    MoveWorkspace {
+        num: WorkspaceNumber,
+        output: &'out Output,
+    },
 }
 
 impl fmt::Display for Command<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::Xrandr(ref program, ref args) => write!(f, "{} {}", program, args.join(" ")),
+            Self::Xrandr {
+                ref program,
+                ref args,
+            } => write!(
+                f,
+                "{} {}",
+                program,
+                args.iter()
+                    .map(Arg::as_str)
+                    .collect::<Vec<&str>>()
+                    .join(" ")
+            ),
             Self::MoveWorkspace { num, output } => {
                 write!(f, "move workspace {num} to {}", output.name)
             }
@@ -413,25 +545,28 @@ impl<'out> Plan<'_, 'out> {
         let mut left: Option<&OutputSetting<'_>> = None;
 
         for setting in &self.output_settings {
-            args.push("--output");
-            args.push(&setting.output.name);
+            args.push(Arg("--output"));
+            args.push(Arg(setting.output.name.as_str()));
 
             match setting.state {
                 OutputState::Connected(OutputActiveState::On) => {
-                    args.push("--auto");
+                    args.push(Arg("--auto"));
                     if let Some(left) = left {
-                        args.push("--right-of");
-                        args.push(&left.output.name);
+                        args.push(Arg("--right-of"));
+                        args.push(Arg(left.output.name.as_str()));
                     }
                     left = Some(setting);
                 }
                 OutputState::Connected(OutputActiveState::Off) | OutputState::Disconnected => {
-                    args.push("--off");
+                    args.push(Arg("--off"));
                 }
             }
         }
 
-        commands.push(Command::Xrandr("xrandr".into(), args));
+        commands.push(Command::Xrandr {
+            program: Program("xrandr"),
+            args,
+        });
 
         for setting in &self.workspace_settings {
             let from = &setting.workspace.output;
@@ -455,7 +590,10 @@ impl<'out> Plan<'_, 'out> {
         let commands = self.commands();
         for command in &commands {
             match *command {
-                Command::Xrandr(ref program, ref args) => {
+                Command::Xrandr {
+                    ref program,
+                    ref args,
+                } => {
                     let output = process::Command::new(program)
                         .args(args)
                         .output()
@@ -471,8 +609,8 @@ impl<'out> Plan<'_, 'out> {
                 }
                 Command::MoveWorkspace { num, output } => {
                     i3.command(i3::Command::MoveWorkspace {
-                        id: num,
-                        output: output.name.clone(),
+                        number: num.into(),
+                        output: output.name.clone().into(),
                     })?;
                 }
             }
@@ -483,8 +621,8 @@ impl<'out> Plan<'_, 'out> {
         for command in &commands {
             if let Command::MoveWorkspace { num, output } = *command {
                 i3.command(i3::Command::MoveWorkspace {
-                    id: num,
-                    output: output.name.clone(),
+                    number: num.into(),
+                    output: output.name.clone().into(),
                 })?;
             }
         }
@@ -565,7 +703,7 @@ impl<'ws, 'out> Workstation<'out> {
             workspace_settings: {
                 let mut v = vec![];
                 for workspace in &workspaces.0 {
-                    let target_output = match workspace.num {
+                    let target_output = match workspace.num.0 {
                         1..=5 => *externals.first(),
                         6..=10 => match externals.len() {
                             1 => *externals.first(),
@@ -601,7 +739,7 @@ impl<'ws, 'out> Workstation<'out> {
     ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
         let mut v = vec![];
         for workspace in &workspaces.0 {
-            let target_output = match workspace.num {
+            let target_output = match workspace.num.0 {
                 0..=9 => laptop,
                 10 => external,
                 _ => {
@@ -627,7 +765,7 @@ impl<'ws, 'out> Workstation<'out> {
     ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
         let mut v = vec![];
         for workspace in &workspaces.0 {
-            let target_output = match workspace.num {
+            let target_output = match workspace.num.0 {
                 7..=10 => laptop,
                 i @ 1..=6 => match externals.len() {
                     1 => externals.first(),
@@ -781,10 +919,12 @@ impl TryFrom<i3::Output> for Output {
     type Error = Error;
 
     fn try_from(value: i3::Output) -> Result<Self, Self::Error> {
-        let class = OutputClass::try_detect(&value.name)?;
+        let name: OutputName = value.name.into();
+
+        let class = OutputClass::try_detect(&name)?;
 
         Ok(Self {
-            name: value.name,
+            name,
             class,
             // all outputs detected by i3 are implicitly connected
             connection_state: OutputConnectionState::Connected,
@@ -796,10 +936,12 @@ impl TryFrom<xrandr::Output> for Output {
     type Error = Error;
 
     fn try_from(value: xrandr::Output) -> Result<Self, Self::Error> {
-        let class = OutputClass::try_detect(&value.name)?;
+        let name: OutputName = value.name.into();
+
+        let class = OutputClass::try_detect(&name)?;
 
         Ok(Self {
-            name: value.name,
+            name,
             class,
             connection_state: value.state.into(),
         })
@@ -855,15 +997,14 @@ impl ExternalOrdering {
 
 const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
 
-fn find_config(path: Option<String>) -> Result<Option<config::Config>, Error> {
+fn find_config(path: Option<&Path>) -> Result<Option<config::Config>, Error> {
     match path {
-        Some(path) => {
-            let path = PathBuf::from(path);
-            match config::from_path(&path)? {
-                Some(c) => Ok(Some(c)),
-                None => Err(Error::ConfigNotFound { path }),
-            }
-        }
+        Some(path) => match config::from_path(path)? {
+            Some(c) => Ok(Some(c)),
+            None => Err(Error::ConfigNotFound {
+                path: path.to_owned(),
+            }),
+        },
         None => {
             let mut config_home = match env::var(XDG_CONFIG_HOME) {
                 Ok(v) => Ok(PathBuf::from(v)),
@@ -1035,7 +1176,7 @@ fn run() -> Result<(), Error> {
 
     match args.subcommand {
         cli::Cmd::Set(set_options) => {
-            let config = find_config(args.config)?;
+            let config = find_config(args.config.map(|path| PathBuf::from(path)).as_deref())?;
 
             manage_screens(
                 config.as_ref(),
@@ -1051,7 +1192,7 @@ fn run() -> Result<(), Error> {
             // we can use any constant value.
             const TOKEN: mio::Token = mio::Token(0);
 
-            let config = find_config(args.config)?;
+            let config = find_config(args.config.map(|path| PathBuf::from(path)).as_deref())?;
 
             if watch_options.once {
                 manage_screens(

@@ -60,7 +60,15 @@ fn single_laptop() -> Result<(), Error> {
                         .into_iter()
                         .filter_map(|cmd| {
                             match cmd {
-                                Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                Command::Xrandr {
+                                    program: _cmd,
+                                    args,
+                                } => Some(
+                                    args.into_iter()
+                                        .map(|arg| arg.as_str().to_owned())
+                                        .collect::<Vec<String>>()
+                                        .join(" "),
+                                ),
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
@@ -78,13 +86,13 @@ fn single_laptop() -> Result<(), Error> {
 #[test]
 fn multiple_laptops() -> Result<(), Error> {
     let laptop1 = Output {
-        name: "eDP-1".to_string(),
+        name: OutputName("eDP-1".to_owned()),
         class: OutputClass::Laptop,
         connection_state: OutputConnectionState::Connected,
     };
 
     let laptop2 = Output {
-        name: "eDP-2".to_string(),
+        name: OutputName("eDP-2".to_owned()),
         class: OutputClass::Laptop,
         connection_state: OutputConnectionState::Connected,
     };
@@ -164,7 +172,15 @@ fn single_external() -> Result<(), Error> {
                         .into_iter()
                         .filter_map(|cmd| {
                             match cmd {
-                                Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                Command::Xrandr {
+                                    program: _cmd,
+                                    args,
+                                } => Some(
+                                    args.into_iter()
+                                        .map(|arg| arg.as_str().to_owned())
+                                        .collect::<Vec<String>>()
+                                        .join(" "),
+                                ),
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
@@ -234,7 +250,15 @@ fn multiple_external() -> Result<(), Error> {
                         .into_iter()
                         .filter_map(|cmd| {
                             match cmd {
-                                Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                Command::Xrandr {
+                                    program: _cmd,
+                                    args,
+                                } => Some(
+                                    args.into_iter()
+                                        .map(|arg| arg.as_str().to_owned())
+                                        .collect::<Vec<String>>()
+                                        .join(" "),
+                                ),
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
@@ -275,7 +299,15 @@ fn multiple_external() -> Result<(), Error> {
                         .into_iter()
                         .filter_map(|cmd| {
                             match cmd {
-                                Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                Command::Xrandr {
+                                    program: _cmd,
+                                    args,
+                                } => Some(
+                                    args.into_iter()
+                                        .map(|arg| arg.as_str().to_owned())
+                                        .collect::<Vec<String>>()
+                                        .join(" "),
+                                ),
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
@@ -372,7 +404,15 @@ fn mixture() -> Result<(), Error> {
                         .into_iter()
                         .filter_map(|cmd| {
                             match cmd {
-                                Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                Command::Xrandr {
+                                    program: _cmd,
+                                    args,
+                                } => Some(
+                                    args.into_iter()
+                                        .map(|arg| arg.as_str().to_owned())
+                                        .collect::<Vec<String>>()
+                                        .join(" "),
+                                ),
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
@@ -440,7 +480,15 @@ fn mixture() -> Result<(), Error> {
                         .into_iter()
                         .filter_map(|cmd| {
                             match cmd {
-                                Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                Command::Xrandr {
+                                    program: _cmd,
+                                    args,
+                                } => Some(
+                                    args.into_iter()
+                                        .map(|arg| arg.as_str().to_owned())
+                                        .collect::<Vec<String>>()
+                                        .join(" "),
+                                ),
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })

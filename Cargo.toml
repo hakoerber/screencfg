@@ -24,7 +24,6 @@ edition = "2024"
 [workspace.dependencies]
 serde = { version = "1.*", default-features = false, features = ["derive"] }
 thiserror = { version = "2.0.*", default-features = false }
-strum = { version = "0.28.*", default-features = false, features = ["derive"] }
 
 [dependencies]
 clap = { version = "4.*", default-features = false, features = [
