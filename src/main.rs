@@ -849,6 +849,38 @@ enum ExternalOrdering {
     Custom { order: Vec<usize> },
 }
 
+impl ExternalOrdering {
+    fn parse_from_str(input: &str, external_output_count: usize) -> Result<Self, Error> {
+        let elems = input
+            .split(',')
+            .map(|elem| elem.parse::<usize>())
+            .collect::<Result<Vec<usize>, ParseIntError>>()
+            .map_err(|err| {
+                Error::Command(format!("could not parse order as integer: {err}").into())
+            })?;
+
+        if external_output_count != elems.len() {
+            return Err(Error::Command(
+                "custom ordering needs to be the same length as number of outputs".into(),
+            ));
+        }
+
+        let sorted = {
+            let mut elems = elems.clone();
+            elems.sort();
+            elems
+        };
+
+        if sorted != (1..=(elems.len())).collect::<Vec<usize>>() {
+            return Err(Error::Command(
+                "custom ordering needs to contain incrementing integers only".into(),
+            ));
+        }
+
+        Ok(Self::Custom { order: elems })
+    }
+}
+
 const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
 
 fn find_config(path: Option<String>) -> Result<Option<config::Config>, Error> {
@@ -940,38 +972,13 @@ fn manage_screens(
     i3_connection.command(i3::Command::Nop)?;
 
     let external_ordering = match custom_external_ordering {
-        Some(order) => {
-            let elems = order
-                .split(',')
-                .map(|elem| elem.parse::<usize>())
-                .collect::<Result<Vec<usize>, ParseIntError>>()
-                .map_err(|err| {
-                    Error::Command(format!("could not parse order as integer: {err}").into())
-                })?;
-
-            if match workstation.externals {
-                Some(ref externals) => externals.1.len() != elems.len() - 1,
-                None => !elems.is_empty(),
-            } {
-                return Err(Error::Command(
-                    "custom ordering needs to be the same length as number of outputs".into(),
-                ));
-            }
-
-            let sorted = {
-                let mut elems = elems.clone();
-                elems.sort();
-                elems
-            };
-
-            if sorted != (1..=(elems.len())).collect::<Vec<usize>>() {
-                return Err(Error::Command(
-                    "custom ordering needs to contain incrementing integers only".into(),
-                ));
-            }
-
-            ExternalOrdering::Custom { order: elems }
-        }
+        Some(order) => ExternalOrdering::parse_from_str(
+            order,
+            match workstation.externals {
+                Some(ref externals) => externals.1.len() + 1,
+                None => 0,
+            },
+        )?,
         None => ExternalOrdering::Default,
     };
 
