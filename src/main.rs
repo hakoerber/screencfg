@@ -1,9 +1,4 @@
-use std::{
-    collections::{HashMap, hash_map::Entry},
-    env, fmt,
-    path::PathBuf,
-    process, time,
-};
+use std::{env, fmt, path::PathBuf, process, time};
 
 use i3::Conn as _;
 
@@ -131,32 +126,29 @@ impl<'out> Output {
             .map(TryInto::try_into)
             .collect::<Result<Vec<Self>, Error>>()?;
 
-        // TODO: do this better, without cloning name
-
-        let mut outputs: HashMap<String, Output> = HashMap::from_iter(
-            i3_outputs
-                .into_iter()
-                .map(|output| (output.name.clone(), output)),
-        );
+        let mut outputs = i3_outputs;
 
         for xrandr_output in xrandr_outputs {
-            match outputs.entry(xrandr_output.name.clone()) {
-                Entry::Occupied(mut existing) => {
-                    let i3_connection_state = existing.get().connection_state;
+            match outputs
+                .iter_mut()
+                .find(|output| output.name == xrandr_output.name)
+            {
+                Some(existing) => {
+                    let i3_connection_state = existing.connection_state;
                     if i3_connection_state != xrandr_output.connection_state {
                         // if there is a connection state mismatch, we go with i3, as xrandr may still
                         // have inactive outputs maked as active
-                        existing.get_mut().connection_state = i3_connection_state;
+                        existing.connection_state = i3_connection_state;
                     }
                 }
                 // if i3 does not know about the output, we use the xrandr state as-is
-                Entry::Vacant(entry) => {
-                    entry.insert(xrandr_output);
+                None => {
+                    outputs.push(xrandr_output);
                 }
             }
         }
 
-        Ok(outputs.into_values().collect())
+        Ok(outputs)
     }
 }
 
