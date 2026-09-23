@@ -1,4 +1,4 @@
-use std::{env, fmt, path::PathBuf, process, time};
+use std::{env, fmt, num::ParseIntError, path::PathBuf, process, time};
 
 use i3::Conn as _;
 
@@ -530,32 +530,59 @@ impl<'ws, 'out> Workstation<'out> {
         laptop: Option<&'out Output>,
         externals: &(&'out Output, Vec<&'out Output>),
         disconnected_externals: Vec<&'out Output>,
+        external_ordering: &ExternalOrdering,
     ) -> Result<Plan<'ws, 'out>, Error> {
+        let externals: Vec<&Output> = {
+            let mut v = vec![externals.0];
+            v.extend(&externals.1);
+            v
+        };
+
+        // shuffle around if required
+        let externals = match external_ordering {
+            ExternalOrdering::Default => externals,
+            ExternalOrdering::Custom { order } => {
+                let mut out = Vec::with_capacity(externals.len());
+                assert_eq!(
+                    order.len(),
+                    externals.len(),
+                    "assured during creation of order"
+                );
+
+                for order in order {
+                    out.push(
+                        *externals
+                            .get(order - 1)
+                            .expect("order contains incrementing integers"),
+                    )
+                }
+
+                out
+            }
+        };
+
         Ok(Plan {
             output_settings: {
-                let mut v = {
-                    let mut v = vec![externals.0.on()];
-                    v.append(&mut externals.1.iter().map(|output| output.on()).collect());
-                    v
-                };
+                let mut outputs: Vec<_> = externals.iter().map(|output| output.on()).collect();
+
                 if let Some(laptop) = laptop {
-                    v.push(laptop.off());
+                    outputs.push(laptop.off());
                 }
-                v.extend(
+                outputs.extend(
                     disconnected_externals
                         .into_iter()
                         .map(|output| output.off()),
                 );
-                v
+                outputs
             },
             workspace_settings: {
                 let mut v = vec![];
                 for workspace in &workspaces.0 {
                     let target_output = match workspace.num {
-                        1..=5 => externals.0,
-                        6..=10 => match externals.1.len() {
-                            0 => externals.0,
-                            1 => externals.1.first().expect("checked for len() above"),
+                        1..=5 => externals[0],
+                        6..=10 => match externals.len() {
+                            1 => externals[0],
+                            2 => externals[1],
                             _ => {
                                 return Err(Error::InvalidSetup(
                                     "more than 2 external monitors not supported".into(),
@@ -609,17 +636,17 @@ impl<'ws, 'out> Workstation<'out> {
     fn distribute_workspaces(
         workspaces: &'ws Workspaces<'out>,
         laptop: &'out Output,
-        externals: &(&'out Output, Vec<&'out Output>),
+        externals: &[&'out Output],
     ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
         let mut v = vec![];
         for workspace in &workspaces.0 {
             let target_output = match workspace.num {
                 7..=10 => laptop,
-                i @ 1..=6 => match externals.1.len() {
-                    0 => externals.0,
-                    1 => match i {
-                        1..=3 => externals.0,
-                        4..=6 => externals.1.first().expect("checked for len() above"),
+                i @ 1..=6 => match externals.len() {
+                    1 => externals[0],
+                    2 => match i {
+                        1 => externals[0],
+                        2..=6 => externals[1],
                         _ => unreachable!("checked the range above"),
                     },
                     _ => {
@@ -648,6 +675,7 @@ impl<'ws, 'out> Workstation<'out> {
         &self,
         setup: Setup,
         workspaces: &'ws Workspaces<'out>,
+        external_ordering: &ExternalOrdering,
     ) -> Result<Plan<'ws, 'out>, Error> {
         match setup {
             setup @ (Setup::LaptopLeft | Setup::LaptopRight) => match self.laptop {
@@ -656,11 +684,41 @@ impl<'ws, 'out> Workstation<'out> {
                     let Some(ref externals) = self.externals else {
                         return Err(Error::Plan("no external screens found".into()));
                     };
-                    let workspace_settings =
-                        Self::distribute_workspaces(workspaces, laptop, externals)?;
+                    let externals: Vec<&Output> = {
+                        let mut v = vec![externals.0];
+                        v.extend(&externals.1);
+                        v
+                    };
 
-                    let mut output_settings = vec![externals.0.on()];
-                    output_settings.append(&mut externals.1.iter().map(|ext| ext.on()).collect());
+                    // shuffle around if required
+                    let externals = match external_ordering {
+                        ExternalOrdering::Default => externals,
+                        ExternalOrdering::Custom { order } => {
+                            let mut out = Vec::with_capacity(externals.len());
+                            assert_eq!(
+                                order.len(),
+                                externals.len(),
+                                "assured during creation of order"
+                            );
+
+                            for order in order {
+                                out.push(
+                                    *externals
+                                        .get(order - 1)
+                                        .expect("order contains incrementing integers"),
+                                )
+                            }
+
+                            out
+                        }
+                    };
+
+                    let workspace_settings =
+                        Self::distribute_workspaces(workspaces, laptop, &externals)?;
+
+                    let mut output_settings: Vec<OutputSetting> =
+                        externals.into_iter().map(|ext| ext.on()).collect();
+
                     output_settings.extend(
                         self.disconnected_externals
                             .iter()
@@ -728,6 +786,7 @@ impl<'ws, 'out> Workstation<'out> {
                     self.laptop,
                     externals,
                     self.disconnected_externals.clone(),
+                    external_ordering,
                 )?),
             },
         }
@@ -831,6 +890,7 @@ fn manage_screens(
     dry_run: bool,
     diagram: bool,
     approach: cli::Approach,
+    custom_external_ordering: Option<&str>,
 ) -> Result<(), Error> {
     let mut i3_connection = i3::connect()?;
 
@@ -879,13 +939,49 @@ fn manage_screens(
 
     i3_connection.command(i3::Command::Nop)?;
 
+    let external_ordering = match custom_external_ordering {
+        Some(order) => {
+            let elems = order
+                .split(',')
+                .map(|elem| elem.parse::<usize>())
+                .collect::<Result<Vec<usize>, ParseIntError>>()
+                .map_err(|err| {
+                    Error::Command(format!("could not parse order as integer: {err}").into())
+                })?;
+
+            if match workstation.externals {
+                Some(ref externals) => externals.1.len() != elems.len() - 1,
+                None => !elems.is_empty(),
+            } {
+                return Err(Error::Command(
+                    "custom ordering needs to be the same length as number of outputs".into(),
+                ));
+            }
+
+            let sorted = {
+                let mut elems = elems.clone();
+                elems.sort();
+                elems
+            };
+
+            if sorted != (1..=(elems.len())).collect::<Vec<usize>>() {
+                return Err(Error::Command(
+                    "custom ordering needs to contain incrementing integers only".into(),
+                ));
+            }
+
+            ExternalOrdering::Custom { order: elems }
+        }
+        None => ExternalOrdering::Default,
+    };
+
     let plan = if let Some(setup) = approach.setup {
-        workstation.plan(setup.into(), &workspaces)?
+        workstation.plan(setup.into(), &workspaces, &external_ordering)?
     } else {
         workstation
-            .plan(Setup::LaptopLeft, &workspaces)
-            .or_else(|_| workstation.plan(Setup::LaptopOnly, &workspaces))
-            .or_else(|_| workstation.plan(Setup::ExternalOnly, &workspaces))
+            .plan(Setup::LaptopLeft, &workspaces, &external_ordering)
+            .or_else(|_| workstation.plan(Setup::LaptopOnly, &workspaces, &external_ordering))
+            .or_else(|_| workstation.plan(Setup::ExternalOnly, &workspaces, &external_ordering))
             .map_err(|_| Error::Plan("no plan fit with \"best\" strategy".into()))?
     };
 
@@ -954,11 +1050,23 @@ fn run() -> Result<(), Error> {
                 set_options.dry_run,
                 set_options.diagram,
                 set_options.approach,
+                set_options.custom_external_ordering.as_deref(),
             )?;
         }
         #[allow(unused)]
         cli::Cmd::Watch(watch_options) => {
             let config = find_config(args.config)?;
+
+            if watch_options.once {
+                manage_screens(
+                    config.as_ref(),
+                    args.debug,
+                    watch_options.dry_run,
+                    watch_options.diagram,
+                    watch_options.approach,
+                    watch_options.custom_external_ordering.as_deref(),
+                )?;
+            }
 
             // used to differentiate between multiple event streams / sockets. We only have one, so
             // we can use any constant value.
@@ -987,6 +1095,7 @@ fn run() -> Result<(), Error> {
                         watch_options.dry_run,
                         watch_options.diagram,
                         watch_options.approach,
+                        watch_options.custom_external_ordering.as_deref(),
                     )
                 },
                 time::Duration::from_secs(1),

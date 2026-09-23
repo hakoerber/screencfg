@@ -51,7 +51,7 @@ fn single_laptop() -> Result<(), Error> {
         ),
         (Setup::ExternalOnly, PlanExpect::Error),
     ] {
-        let result = workstation.plan(setup, &workspaces);
+        let result = workstation.plan(setup, &workspaces, &ExternalOrdering::Default);
         match expect {
             PlanExpect::Error => assert!(result.is_err()),
             PlanExpect::Valid(plan, cmd) => {
@@ -155,7 +155,7 @@ fn single_external() -> Result<(), Error> {
             ),
         ),
     ] {
-        let result = workstation.plan(setup, &workspaces);
+        let result = workstation.plan(setup, &workspaces, &ExternalOrdering::Default);
         match expect {
             PlanExpect::Error => assert!(result.is_err()),
             PlanExpect::Valid(plan, cmd) => {
@@ -225,7 +225,48 @@ fn multiple_external() -> Result<(), Error> {
             ),
         ),
     ] {
-        let result = workstation.plan(setup, &workspaces);
+        let result = workstation.plan(setup, &workspaces, &ExternalOrdering::Default);
+        match expect {
+            PlanExpect::Error => assert!(result.is_err()),
+            PlanExpect::Valid(ref plan, cmd) => {
+                assert_eq!(result?.output_settings, plan.output_settings);
+                assert_eq!(
+                    plan.commands()
+                        .into_iter()
+                        .filter_map(|cmd| {
+                            match cmd {
+                                Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                Command::MoveWorkspace { .. } => None,
+                            }
+                        })
+                        .next()
+                        .unwrap(),
+                    cmd
+                );
+            }
+        }
+    }
+
+    for (setup, expect) in [
+        (Setup::LaptopLeft, PlanExpect::Error),
+        (Setup::LaptopRight, PlanExpect::Error),
+        (Setup::LaptopOnly, PlanExpect::Error),
+        (
+            Setup::ExternalOnly,
+            PlanExpect::Valid(
+                Plan {
+                    output_settings: vec![outputs[1].on(), outputs[0].on()],
+                    workspace_settings: vec![],
+                },
+                "--output DP-2 --auto --output DP-1 --auto --right-of DP-2",
+            ),
+        ),
+    ] {
+        let result = workstation.plan(
+            setup,
+            &workspaces,
+            &ExternalOrdering::Custom { order: vec![2, 1] },
+        );
         match expect {
             PlanExpect::Error => assert!(result.is_err()),
             PlanExpect::Valid(plan, cmd) => {
@@ -281,86 +322,136 @@ fn mixture() -> Result<(), Error> {
     );
 
     for (setup, expect) in [
-            (
-                Setup::LaptopLeft,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![
-                            outputs[0].on(),
-                            outputs[1].on(),
-                            outputs[2].on(),
-                        ],
-                        workspace_settings:vec![],
-                    },
-                    "--output eDP-1 --auto --output DP-1 --auto --right-of eDP-1 --output HDMI-1 --auto --right-of DP-1",
-                ),
+        (
+            Setup::LaptopLeft,
+            PlanExpect::Valid(
+                Plan {
+                    output_settings: vec![outputs[0].on(), outputs[1].on(), outputs[2].on()],
+                    workspace_settings: vec![],
+                },
+                "--output eDP-1 --auto --output DP-1 --auto --right-of eDP-1 --output HDMI-1 --auto --right-of DP-1",
             ),
-            (
-                Setup::LaptopRight,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![
-                            outputs[1].on(),
-                            outputs[2].on(),
-                            outputs[0].on(),
-                        ],
-                        workspace_settings:vec![],
-                    },
-                    "--output DP-1 --auto --output HDMI-1 --auto --right-of DP-1 --output eDP-1 --auto --right-of HDMI-1",
-                ),
+        ),
+        (
+            Setup::LaptopRight,
+            PlanExpect::Valid(
+                Plan {
+                    output_settings: vec![outputs[1].on(), outputs[2].on(), outputs[0].on()],
+                    workspace_settings: vec![],
+                },
+                "--output DP-1 --auto --output HDMI-1 --auto --right-of DP-1 --output eDP-1 --auto --right-of HDMI-1",
             ),
-            (
-                Setup::LaptopOnly,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![
-                            outputs[0].on(),
-                            outputs[1].off(),
-                            outputs[2].off(),
-                        ],
-                        workspace_settings:vec![],
-                    },
-                    "--output eDP-1 --auto --output DP-1 --off --output HDMI-1 --off",
-                ),
+        ),
+        (
+            Setup::LaptopOnly,
+            PlanExpect::Valid(
+                Plan {
+                    output_settings: vec![outputs[0].on(), outputs[1].off(), outputs[2].off()],
+                    workspace_settings: vec![],
+                },
+                "--output eDP-1 --auto --output DP-1 --off --output HDMI-1 --off",
             ),
-            (
-                Setup::ExternalOnly,
-                PlanExpect::Valid(
-                    Plan {
-                        output_settings: vec![
-                            outputs[1].on(),
-                            outputs[2].on(),
-                            outputs[0].off(),
-                        ],
-                        workspace_settings:vec![],
-                    },
-                    "--output DP-1 --auto --output HDMI-1 --auto --right-of DP-1 --output eDP-1 --off",
-                ),
+        ),
+        (
+            Setup::ExternalOnly,
+            PlanExpect::Valid(
+                Plan {
+                    output_settings: vec![outputs[1].on(), outputs[2].on(), outputs[0].off()],
+                    workspace_settings: vec![],
+                },
+                "--output DP-1 --auto --output HDMI-1 --auto --right-of DP-1 --output eDP-1 --off",
             ),
-        ] {
-            let result = workstation.plan(setup, &workspaces);
-            match expect {
-                PlanExpect::Error => assert!(result.is_err()),
-                PlanExpect::Valid(plan, cmd) => {
-                    assert_eq!(result?.output_settings, plan.output_settings);
-                    assert_eq!(
-                        plan.commands()
-                            .into_iter()
-                            .filter_map(|cmd| {
-                                match cmd {
-                                    Command::Xrandr(_cmd, args) => {
-                                        Some(args.join(" "))
-                                    }
-                                    Command::MoveWorkspace { .. } => None,
-                                }
-                            })
-                            .next()
-                            .unwrap(),
-                        cmd
-                    );
-                }
+        ),
+    ] {
+        let result = workstation.plan(setup, &workspaces, &ExternalOrdering::Default);
+        match expect {
+            PlanExpect::Error => assert!(result.is_err()),
+            PlanExpect::Valid(plan, cmd) => {
+                assert_eq!(result?.output_settings, plan.output_settings);
+                assert_eq!(
+                    plan.commands()
+                        .into_iter()
+                        .filter_map(|cmd| {
+                            match cmd {
+                                Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                Command::MoveWorkspace { .. } => None,
+                            }
+                        })
+                        .next()
+                        .unwrap(),
+                    cmd
+                );
             }
         }
+    }
+
+    for (setup, expect) in [
+        (
+            Setup::LaptopLeft,
+            PlanExpect::Valid(
+                Plan {
+                    output_settings: vec![outputs[0].on(), outputs[2].on(), outputs[1].on()],
+                    workspace_settings: vec![],
+                },
+                "--output eDP-1 --auto --output HDMI-1 --auto --right-of eDP-1 --output DP-1 --auto --right-of HDMI-1",
+            ),
+        ),
+        (
+            Setup::LaptopRight,
+            PlanExpect::Valid(
+                Plan {
+                    output_settings: vec![outputs[2].on(), outputs[1].on(), outputs[0].on()],
+                    workspace_settings: vec![],
+                },
+                "--output HDMI-1 --auto --output DP-1 --auto --right-of HDMI-1 --output eDP-1 --auto --right-of DP-1",
+            ),
+        ),
+        (
+            Setup::LaptopOnly,
+            PlanExpect::Valid(
+                Plan {
+                    output_settings: vec![outputs[0].on(), outputs[1].off(), outputs[2].off()],
+                    workspace_settings: vec![],
+                },
+                "--output eDP-1 --auto --output DP-1 --off --output HDMI-1 --off",
+            ),
+        ),
+        (
+            Setup::ExternalOnly,
+            PlanExpect::Valid(
+                Plan {
+                    output_settings: vec![outputs[2].on(), outputs[1].on(), outputs[0].off()],
+                    workspace_settings: vec![],
+                },
+                "--output HDMI-1 --auto --output DP-1 --auto --right-of HDMI-1 --output eDP-1 --off",
+            ),
+        ),
+    ] {
+        let result = workstation.plan(
+            setup,
+            &workspaces,
+            &ExternalOrdering::Custom { order: vec![2, 1] },
+        );
+        match expect {
+            PlanExpect::Error => assert!(result.is_err()),
+            PlanExpect::Valid(plan, cmd) => {
+                assert_eq!(result?.output_settings, plan.output_settings);
+                assert_eq!(
+                    plan.commands()
+                        .into_iter()
+                        .filter_map(|cmd| {
+                            match cmd {
+                                Command::Xrandr(_cmd, args) => Some(args.join(" ")),
+                                Command::MoveWorkspace { .. } => None,
+                            }
+                        })
+                        .next()
+                        .unwrap(),
+                    cmd
+                );
+            }
+        }
+    }
 
     Ok(())
 }

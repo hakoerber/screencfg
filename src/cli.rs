@@ -50,6 +50,9 @@ pub(crate) struct SetOptions {
     pub(crate) approach: Approach,
 
     #[arg(long)]
+    pub(crate) custom_external_ordering: Option<String>,
+
+    #[arg(long)]
     pub(crate) dry_run: bool,
 
     #[arg(long)]
@@ -62,8 +65,14 @@ pub(crate) struct WatchOptions {
     pub(crate) approach: Approach,
 
     #[arg(long)]
+    pub(crate) custom_external_ordering: Option<String>,
+
+    #[arg(long)]
     pub(crate) dry_run: bool,
 
     #[arg(long)]
     pub(crate) diagram: bool,
+
+    #[arg(long)]
+    pub(crate) once: bool,
 }
