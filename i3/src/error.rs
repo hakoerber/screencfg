@@ -1,5 +1,9 @@
 use std::{fmt, io};
 
+use thiserror::Error;
+
+use crate::ResponseType;
+
 #[derive(Debug)]
 pub enum Msg {
     Owned(String),
@@ -31,25 +35,21 @@ impl fmt::Display for Msg {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
+    #[error("connection failed: {0}")]
     Connection(Msg),
+    #[error("received unexpected response (expected {expected}, received {received})")]
+    UnexpectedResponse {
+        expected: ResponseType,
+        received: ResponseType,
+    },
+    #[error("unknown response command: {id}")]
+    UnknownResponseCommand { id: u32 },
+    #[error("command failed: {0}")]
     Command(Msg),
+    #[error("protocol error: {0}")]
     Protocol(Msg),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match *self {
-                Self::Connection(ref msg) => format!("connection failed: {msg}"),
-                Self::Command(ref msg) => format!("command failed: {msg}"),
-                Self::Protocol(ref msg) => format!("overflow: {msg}"),
-            }
-        )
-    }
 }
 
 impl From<io::Error> for Error {
@@ -63,5 +63,3 @@ impl From<serde_json::Error> for Error {
         Self::Connection(Msg::Owned(value.to_string()))
     }
 }
-
-impl std::error::Error for Error {}

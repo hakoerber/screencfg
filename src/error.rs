@@ -1,4 +1,6 @@
-use std::{fmt, io, path::PathBuf, string};
+use std::{fmt, io, path::PathBuf};
+
+use thiserror::Error;
 
 #[derive(Debug)]
 pub(crate) enum Msg {
@@ -31,82 +33,32 @@ impl fmt::Display for Msg {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub(crate) enum Error {
+    #[error("error: {0}")]
     Generic(Msg),
+    #[error("command failed: {0}")]
     Command(Msg),
+    #[error("classification failed: {0}")]
     Classify(Msg),
+    #[error("workstation failed: {0}")]
     Workstation(Msg),
+    #[error("plan failed: {0}")]
     Plan(Msg),
+    #[error("apply failed: {0}")]
     Apply(Msg),
-    I3(i3::Error),
-    Xrandr(xrandr::Error),
+    #[error("i3: {0}")]
+    I3(#[from] i3::Error),
+    #[error("xrandr: {0}")]
+    Xrandr(#[from] xrandr::Error),
+    #[error("invalid setup: {0}")]
     InvalidSetup(Msg),
+    #[error("invalid config : {0}")]
     InvalidConfig(Msg),
-    ConfigFileOpen(io::Error),
+    #[error("could not open config file at {path}: {err}", path = path.display())]
+    ConfigFileOpen { path: PathBuf, err: io::Error },
+    #[error("could not find config file at {path}", path = path.display())]
     ConfigNotFound { path: PathBuf },
-    Udev(crate::udev::Error),
+    #[error("udev error: {0}")]
+    Udev(#[from] crate::udev::Error),
 }
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match *self {
-                Self::Generic(ref msg) => format!("error: {msg}"),
-                Self::Command(ref msg) => format!("command failed: {msg}"),
-                Self::Classify(ref msg) => format!("classification failed: {msg}"),
-                Self::Workstation(ref msg) => format!("workstation failed: {msg}"),
-                Self::Plan(ref msg) => format!("plan failed: {msg}"),
-                Self::Apply(ref msg) => format!("apply failed: {msg}"),
-                Self::I3(ref e) => format!("i3: {e}"),
-                Self::Xrandr(ref e) => format!("xrandr: {e}"),
-                Self::InvalidSetup(ref msg) => format!("invalid setup: {msg}"),
-                Self::InvalidConfig(ref msg) => format!("invalid config: {msg}"),
-                Self::ConfigFileOpen(ref err) => format!("could not open config: {err}"),
-                Self::ConfigNotFound { ref path } =>
-                    format!("could not find config file at {}", path.display()),
-                Self::Udev(ref udev_error) => format!("udev error: {udev_error}"),
-            },
-        )
-    }
-}
-
-impl From<fmt::Error> for Error {
-    fn from(value: fmt::Error) -> Self {
-        Self::Generic(Msg::Owned(value.to_string()))
-    }
-}
-
-impl From<crate::udev::Error> for Error {
-    fn from(value: crate::udev::Error) -> Self {
-        Self::Udev(value)
-    }
-}
-
-impl From<i3::Error> for Error {
-    fn from(value: i3::Error) -> Self {
-        Self::I3(value)
-    }
-}
-
-impl From<xrandr::Error> for Error {
-    fn from(value: xrandr::Error) -> Self {
-        Self::Xrandr(value)
-    }
-}
-
-impl From<string::FromUtf8Error> for Error {
-    fn from(value: string::FromUtf8Error) -> Self {
-        Self::Command(Msg::Owned(value.to_string()))
-    }
-}
-
-impl From<toml::de::Error> for Error {
-    fn from(value: toml::de::Error) -> Self {
-        Self::InvalidConfig(Msg::Owned(value.to_string()))
-    }
-}
-
-impl std::error::Error for Error {}

@@ -1,9 +1,10 @@
 use std::{fmt, io, sync::mpsc, thread, time};
 
 pub(crate) use mio::Token;
+use thiserror::Error;
 pub(crate) use udev::EventType;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub(crate) struct Error(io::Error);
 
 impl From<io::Error> for Error {

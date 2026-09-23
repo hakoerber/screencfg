@@ -461,11 +461,13 @@ impl<'out> Plan<'_, 'out> {
                         .output()
                         .map_err(|e| Error::Command(e.to_string().into()))?;
 
-                    output
-                        .status
-                        .success()
-                        .then_some(())
-                        .ok_or(Error::Apply(String::from_utf8(output.stderr)?.into()))?;
+                    if !output.status.success() {
+                        return Err(Error::Apply(
+                            String::from_utf8(output.stderr)
+                                .map_err(|err| Error::Command(err.to_string().into()))?
+                                .into(),
+                        ));
+                    }
                 }
                 Command::MoveWorkspace { num, output } => {
                     i3.command(i3::Command::MoveWorkspace {
@@ -980,7 +982,8 @@ fn manage_screens(
 
     if diagram {
         let mut buf = String::new();
-        plan.diagram(&mut buf)?;
+        plan.diagram(&mut buf)
+            .map_err(|err| Error::Generic(err.to_string().into()))?;
 
         println!("{buf}\n");
     }

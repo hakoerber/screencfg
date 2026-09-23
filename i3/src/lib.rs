@@ -235,9 +235,12 @@ impl Conn for Connection {
 
         match response {
             Response::Version(version) => Ok(version.into()),
-            Response::Workspaces(_) | Response::Command(_) | Response::Outputs(_) => Err(
-                Error::Connection("received invalid response from i3".into()),
-            ),
+            Response::Workspaces(_) | Response::Command(_) | Response::Outputs(_) => {
+                Err(Error::UnexpectedResponse {
+                    expected: ResponseType::Version,
+                    received: response.into(),
+                })
+            }
         }
     }
 
@@ -247,9 +250,12 @@ impl Conn for Connection {
 
         match response {
             Response::Outputs(outputs) => Ok(outputs.into()),
-            Response::Version(_) | Response::Workspaces(_) | Response::Command(_) => Err(
-                Error::Connection("received invalid response from i3".into()),
-            ),
+            Response::Version(_) | Response::Workspaces(_) | Response::Command(_) => {
+                Err(Error::UnexpectedResponse {
+                    expected: ResponseType::Outputs,
+                    received: response.into(),
+                })
+            }
         }
     }
 
@@ -260,9 +266,12 @@ impl Conn for Connection {
 
         match response {
             Response::Workspaces(workspaces) => Ok(workspaces.into()),
-            Response::Version(_) | Response::Command(_) | Response::Outputs(_) => Err(
-                Error::Connection("received invalid response from i3".into()),
-            ),
+            Response::Version(_) | Response::Command(_) | Response::Outputs(_) => {
+                Err(Error::UnexpectedResponse {
+                    expected: ResponseType::Workspaces,
+                    received: response.into(),
+                })
+            }
         }
     }
 
@@ -283,9 +292,12 @@ impl Conn for Connection {
                 }
                 Ok(())
             }
-            Response::Version(_) | Response::Workspaces(_) | Response::Outputs(_) => Err(
-                Error::Connection("received invalid response from i3".into()),
-            ),
+            Response::Version(_) | Response::Workspaces(_) | Response::Outputs(_) => {
+                Err(Error::UnexpectedResponse {
+                    expected: ResponseType::Command,
+                    received: response.into(),
+                })
+            }
         }
     }
 }
@@ -467,7 +479,7 @@ impl Message {
         message.extend_from_slice(b"i3-ipc");
         message.extend_from_slice(
             &u32::try_from(payload.as_ref().map_or(0, |l| l.len()))
-                .map_err(|_err| Error::Command("payload length bigger than 4 bytes".into()))?
+                .map_err(|_err| Error::Protocol("payload length bigger than 4 bytes".into()))?
                 .to_ne_bytes(),
         );
         message.extend_from_slice(&(command_number.to_ne_bytes()));
@@ -554,7 +566,8 @@ impl From<WorkspacePayload> for Workspace {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, strum::EnumDiscriminants)]
+#[strum_discriminants(derive(strum::Display), vis(pub), name(ResponseType))]
 enum Response {
     Version(VersionPayload),
     Workspaces(Vec<WorkspacePayload>),
@@ -618,7 +631,7 @@ impl Response {
             1 => Ok(Self::Workspaces(serde_json::from_slice(&response)?)),
             3 => Ok(Self::Outputs(serde_json::from_slice(&response)?)),
             7 => Ok(Self::Version(serde_json::from_slice(&response)?)),
-            _ => Err(Error::Connection("unknown response type".into())),
+            id => Err(Error::UnknownResponseCommand { id }),
         }
     }
 }

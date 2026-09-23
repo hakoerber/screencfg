@@ -17,9 +17,9 @@ impl TryFrom<&str> for OutputState {
         match value {
             "connected" => Ok(Self::Connected),
             "disconnected" => Ok(Self::Disconnected),
-            _ => Err(Error::Parse(
-                format!("unknown xrandr output state: {value}").into(),
-            )),
+            _ => Err(Error::Parse(format!(
+                "unknown xrandr output state: {value}"
+            ))),
         }
     }
 }
@@ -34,9 +34,11 @@ impl Output {
         String::from_utf8(
             process::Command::new("xrandr")
                 .arg("--query")
-                .output()?
+                .output()
+                .map_err(|err| Error::Command(err.to_string()))?
                 .stdout,
-        )?
+        )
+        .map_err(|err| Error::Command(err.to_string()))?
         .lines()
         .skip(1) // skip header
         .filter(|line| line.chars().next().is_some_and(char::is_alphanumeric))
@@ -47,9 +49,9 @@ impl Output {
                     name: part_1.to_owned(),
                     state: part_2.try_into()?,
                 }),
-                _ => Err(Error::Command(
-                    format!("not enough output information in line: {line}").into(),
-                )),
+                _ => Err(Error::Command(format!(
+                    "not enough output information in line: {line}"
+                ))),
             }
         })
         .collect()
