@@ -67,22 +67,19 @@ impl From<String> for OutputName {
     }
 }
 
-pub enum Command {
+pub enum Command<'out> {
     Nop,
     MoveWorkspace {
         number: WorkspaceNumber,
-        output: OutputName,
+        output: &'out OutputName,
     },
 }
 
-impl From<&Command> for Cow<'static, str> {
-    fn from(value: &Command) -> Self {
+impl From<&Command<'_>> for Cow<'static, str> {
+    fn from(value: &Command<'_>) -> Self {
         match *value {
             Command::Nop => Cow::from("nop"),
-            Command::MoveWorkspace {
-                number: id,
-                ref output,
-            } => Cow::from(format!(
+            Command::MoveWorkspace { number: id, output } => Cow::from(format!(
                 "[workspace=\"{id}\"] move workspace to output {output}"
             )),
         }
@@ -93,7 +90,7 @@ pub trait Conn {
     fn version(&mut self) -> Result<Version, Error>;
     fn outputs(&mut self) -> Result<Outputs, Error>;
     fn workspaces(&mut self) -> Result<Workspaces, Error>;
-    fn command(&mut self, command: Command) -> Result<(), Error>;
+    fn command(&mut self, command: Command<'_>) -> Result<(), Error>;
 }
 
 #[cfg(any(test, feature = "integration-test"))]
@@ -278,7 +275,7 @@ impl Conn for MockConnection {
         }
     }
 
-    fn command(&mut self, _command: Command) -> Result<(), Error> {
+    fn command(&mut self, _command: Command<'_>) -> Result<(), Error> {
         self.check_fail()?;
         Ok(())
     }
@@ -334,7 +331,7 @@ impl Conn for Connection {
         }
     }
 
-    fn command(&mut self, command: Command) -> Result<(), Error> {
+    fn command(&mut self, command: Command<'_>) -> Result<(), Error> {
         Message::Command(command).send(self)?;
 
         let response = Response::read(self)?;
@@ -507,15 +504,15 @@ impl Index<usize> for Outputs {
     }
 }
 
-enum Message {
-    Command(Command),
+enum Message<'out> {
+    Command(Command<'out>),
     Workspaces,
     Outputs,
     Version,
 }
 
-impl From<Message> for u32 {
-    fn from(value: Message) -> Self {
+impl From<Message<'_>> for u32 {
+    fn from(value: Message<'_>) -> Self {
         match value {
             Message::Command(_) => 0,
             Message::Workspaces => 1,
@@ -525,7 +522,7 @@ impl From<Message> for u32 {
     }
 }
 
-impl Message {
+impl Message<'_> {
     fn bytes(self) -> Result<Vec<u8>, Error> {
         let payload: Option<Cow<'static, str>> = match self {
             Self::Command(ref command) => Some(command.into()),

@@ -610,7 +610,7 @@ impl<'out> Plan<'_, 'out> {
                 Command::MoveWorkspace { num, output } => {
                     i3.command(i3::Command::MoveWorkspace {
                         number: num.into(),
-                        output: output.name.clone().into(),
+                        output: &output.name.clone().into(),
                     })?;
                 }
             }
@@ -622,7 +622,7 @@ impl<'out> Plan<'_, 'out> {
             if let Command::MoveWorkspace { num, output } = *command {
                 i3.command(i3::Command::MoveWorkspace {
                     number: num.into(),
-                    output: output.name.clone().into(),
+                    output: &output.name.clone().into(),
                 })?;
             }
         }
