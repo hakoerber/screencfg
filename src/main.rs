@@ -586,44 +586,68 @@ impl<'out> Plan<'_, 'out> {
         commands
     }
 
-    fn apply(self, i3: &mut i3::Connection, commands: Vec<Command<'out, '_>>) -> Result<(), Error> {
-        for command in &commands {
-            match *command {
-                Command::Xrandr {
-                    ref program,
-                    ref args,
-                } => {
-                    let output = process::Command::new(program)
-                        .args(args)
-                        .output()
-                        .map_err(|e| Error::Command(e.to_string().into()))?;
+    fn apply(i3: &mut i3::Connection, commands: Vec<Command<'out, '_>>) -> Result<(), Error> {
+        // we need to do the xrandr commands first, as i3 may create new workspaces automatically on newly
+        // created outputs.
 
-                    if !output.status.success() {
-                        return Err(Error::Apply(
-                            String::from_utf8(output.stderr)
-                                .map_err(|err| Error::Command(err.to_string().into()))?
-                                .into(),
-                        ));
+        enum Either<A, B> {
+            A(A),
+            B(B),
+        }
+
+        struct XrandrCommand<'args> {
+            program: Program,
+            args: Vec<Arg<'args>>,
+        }
+
+        struct MoveWorkspace<'out> {
+            num: WorkspaceNumber,
+            output: &'out Output,
+        }
+
+        let (xrandr_commands, i3_commands) = commands
+            .into_iter()
+            .map(|command| match command {
+                Command::Xrandr { program, args } => Either::A(XrandrCommand { program, args }),
+                Command::MoveWorkspace { num, output } => Either::B(MoveWorkspace { num, output }),
+            })
+            .fold(
+                (Vec::new(), Vec::new()),
+                |mut vecs: (Vec<XrandrCommand<'_>>, Vec<MoveWorkspace<'_>>), r| match r {
+                    Either::A(cmd) => {
+                        vecs.0.push(cmd);
+                        vecs
                     }
-                }
-                Command::MoveWorkspace { num, output } => {
-                    i3.command(i3::Command::MoveWorkspace {
-                        number: num.into(),
-                        output: &output.name.clone().into(),
-                    })?;
-                }
+                    Either::B(cmd) => {
+                        vecs.1.push(cmd);
+                        vecs
+                    }
+                },
+            );
+
+        for command in xrandr_commands {
+            let output = process::Command::new(command.program)
+                .args(command.args)
+                .output()
+                .map_err(|e| Error::Command(e.to_string().into()))?;
+
+            if !output.status.success() {
+                return Err(Error::Apply(
+                    String::from_utf8(output.stderr)
+                        .map_err(|err| Error::Command(err.to_string().into()))?
+                        .into(),
+                ));
             }
         }
 
-        // apply the workspace moves again. this may be necessary because i3 auto-assigns a new workspace
-        // when activating a new output. this new workspace may actually belong to a different output.
-        for command in &commands {
-            if let Command::MoveWorkspace { num, output } = *command {
-                i3.command(i3::Command::MoveWorkspace {
-                    number: num.into(),
-                    output: &output.name.clone().into(),
-                })?;
-            }
+        // do an explicit i3 reload to allow i3 to pick up the new outputs
+        i3.command(i3::Command::Reload)?;
+
+        for command in i3_commands {
+            i3.command(i3::Command::MoveWorkspace {
+                number: command.num.into(),
+                output: &command.output.name.clone().into(),
+            })?;
         }
 
         Ok(())
@@ -1141,8 +1165,8 @@ fn manage_screens(
     }
 
     if !dry_run {
-        plan.apply(&mut i3_connection, commands)?
-    };
+        Plan::apply(&mut i3_connection, commands)?;
+    }
 
     if let Some(post_commands) = config.and_then(|c| c.post_commands.as_ref()) {
         for command in post_commands {

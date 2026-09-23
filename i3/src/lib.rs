@@ -73,6 +73,7 @@ pub enum Command<'out> {
         number: WorkspaceNumber,
         output: &'out OutputName,
     },
+    Reload,
 }
 
 impl From<&Command<'_>> for Cow<'static, str> {
@@ -82,6 +83,7 @@ impl From<&Command<'_>> for Cow<'static, str> {
             Command::MoveWorkspace { number: id, output } => Cow::from(format!(
                 "[workspace=\"{id}\"] move workspace to output {output}"
             )),
+            Command::Reload => Cow::from("reload"),
         }
     }
 }
