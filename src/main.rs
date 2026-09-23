@@ -207,7 +207,7 @@ fn run() -> Result<(), Error> {
             let Err(err) = i3::start_event_listener::<_, Error>(
                 i3_connection,
                 Duration::from_millis(1000),
-                &[EventType::Output, EventType::Workspace],
+                &[EventType::Output],
                 |event| {
                     eprintln!("received event from i3: {event}");
                     manage_screens(
