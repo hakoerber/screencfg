@@ -134,11 +134,9 @@ impl<'out> Output {
                 .find(|output| output.name == xrandr_output.name)
             {
                 Some(existing) => {
-                    let i3_connection_state = existing.connection_state;
-                    if i3_connection_state != xrandr_output.connection_state {
+                    if existing.connection_state != xrandr_output.connection_state {
                         // if there is a connection state mismatch, we go with i3, as xrandr may still
                         // have inactive outputs maked as active
-                        existing.connection_state = i3_connection_state;
                     }
                 }
                 // if i3 does not know about the output, we use the xrandr state as-is
