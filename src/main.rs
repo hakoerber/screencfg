@@ -586,8 +586,7 @@ impl<'out> Plan<'_, 'out> {
         commands
     }
 
-    fn apply(self, i3: &mut i3::Connection) -> Result<Vec<Command<'out, 'out>>, Error> {
-        let commands = self.commands();
+    fn apply(self, i3: &mut i3::Connection, commands: Vec<Command<'out, '_>>) -> Result<(), Error> {
         for command in &commands {
             match *command {
                 Command::Xrandr {
@@ -627,7 +626,7 @@ impl<'out> Plan<'_, 'out> {
             }
         }
 
-        Ok(commands)
+        Ok(())
     }
 }
 
@@ -1129,16 +1128,21 @@ fn manage_screens(
         println!("{buf}\n");
     }
 
-    let commands = if dry_run {
-        plan.commands()
-    } else {
-        plan.apply(&mut i3_connection)?
-    };
+    let commands = plan.commands();
 
-    println!("applying changes:");
-    for command in commands {
+    if dry_run {
+        println!("dry run mode:");
+    } else {
+        println!("applying changes:");
+    }
+
+    for command in &commands {
         println!("- {command}");
     }
+
+    if !dry_run {
+        plan.apply(&mut i3_connection, commands)?
+    };
 
     if let Some(post_commands) = config.and_then(|c| c.post_commands.as_ref()) {
         for command in post_commands {
