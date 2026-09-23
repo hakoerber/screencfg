@@ -135,7 +135,7 @@ fn single_external() -> Result<(), Error> {
         workstation,
         Workstation {
             laptop: None,
-            externals: Some((&outputs[0], vec![])),
+            externals: Some(NonEmptyVec::new(outputs.iter().take(1).collect())),
             disconnected_externals: vec![],
         }
     );
@@ -205,7 +205,7 @@ fn multiple_external() -> Result<(), Error> {
         workstation,
         Workstation {
             laptop: None,
-            externals: Some((&outputs[0], vec![&outputs[1]])),
+            externals: Some(NonEmptyVec::new(outputs.iter().take(2).collect())),
             disconnected_externals: vec![],
         }
     );
@@ -316,7 +316,7 @@ fn mixture() -> Result<(), Error> {
         workstation,
         Workstation {
             laptop: Some(&outputs[0]),
-            externals: Some((&outputs[1], vec![&outputs[2]])),
+            externals: Some(NonEmptyVec::new(outputs.iter().skip(1).take(2).collect())),
             disconnected_externals: vec![],
         }
     );

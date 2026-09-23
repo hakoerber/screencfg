@@ -2,12 +2,14 @@ use std::{env, fmt, num::ParseIntError, path::PathBuf, process, time};
 
 use i3::Conn as _;
 
-mod error;
-use error::Error;
-
 mod cli;
 mod config;
+mod error;
+mod nonempty;
 mod udev;
+
+use error::Error;
+use nonempty::NonEmptyVec;
 
 #[cfg(test)]
 mod tests;
@@ -153,7 +155,7 @@ impl<'out> Output {
 #[derive(Debug, PartialEq, Eq)]
 struct Workstation<'out> {
     laptop: Option<&'out Output>,
-    externals: Option<(&'out Output, Vec<&'out Output>)>,
+    externals: Option<NonEmptyVec<&'out Output>>,
     disconnected_externals: Vec<&'out Output>,
 }
 
@@ -181,7 +183,7 @@ impl<'out> TryFrom<&'out [Output]> for Workstation<'out> {
             .into_iter()
             .partition(|output| output.connection_state == OutputConnectionState::Connected);
 
-        let (mut externals, rest): (Vec<_>, Vec<_>) = connected_externals
+        let (externals, rest): (Vec<_>, Vec<_>) = connected_externals
             .into_iter()
             .partition(|output| output.class == OutputClass::External);
 
@@ -191,7 +193,7 @@ impl<'out> TryFrom<&'out [Output]> for Workstation<'out> {
 
         let externals = match externals.len() {
             0 => None,
-            _ => Some((externals.remove(0), externals)),
+            _ => Some(NonEmptyVec::new(externals)),
         };
 
         if !rest.is_empty() {
@@ -492,7 +494,7 @@ impl<'ws, 'out> Workstation<'out> {
     fn all_on_laptop(
         workspaces: &'ws Workspaces<'out>,
         laptop: &'out Output,
-        externals: Option<(&'out Output, Vec<&'out Output>)>,
+        externals: Option<&NonEmptyVec<&'out Output>>,
         disconnected_externals: Vec<&'out Output>,
     ) -> Plan<'ws, 'out> {
         Plan {
@@ -500,11 +502,7 @@ impl<'ws, 'out> Workstation<'out> {
                 let mut outputs = vec![laptop.on()];
                 outputs.append(&mut match externals {
                     None => vec![],
-                    Some((ext, rest)) => {
-                        let mut v = vec![ext.off()];
-                        v.append(&mut rest.iter().map(|ext| ext.off()).collect());
-                        v
-                    }
+                    Some(externals) => externals.iter().map(|ext| ext.off()).collect(),
                 });
                 outputs.extend(
                     disconnected_externals
@@ -528,16 +526,10 @@ impl<'ws, 'out> Workstation<'out> {
     fn all_on_external(
         workspaces: &'ws Workspaces<'out>,
         laptop: Option<&'out Output>,
-        externals: &(&'out Output, Vec<&'out Output>),
+        externals: &NonEmptyVec<&'out Output>,
         disconnected_externals: Vec<&'out Output>,
         external_ordering: &ExternalOrdering,
     ) -> Result<Plan<'ws, 'out>, Error> {
-        let externals: Vec<&Output> = {
-            let mut v = vec![externals.0];
-            v.extend(&externals.1);
-            v
-        };
-
         // shuffle around if required
         let externals = match external_ordering {
             ExternalOrdering::Default => externals,
@@ -557,7 +549,7 @@ impl<'ws, 'out> Workstation<'out> {
                     )
                 }
 
-                out
+                &NonEmptyVec::new(out)
             }
         };
 
@@ -579,10 +571,10 @@ impl<'ws, 'out> Workstation<'out> {
                 let mut v = vec![];
                 for workspace in &workspaces.0 {
                     let target_output = match workspace.num {
-                        1..=5 => externals[0],
+                        1..=5 => *externals.first(),
                         6..=10 => match externals.len() {
-                            1 => externals[0],
-                            2 => externals[1],
+                            1 => *externals.first(),
+                            2 => externals.get(1).expect("checked len above"),
                             _ => {
                                 return Err(Error::InvalidSetup(
                                     "more than 2 external monitors not supported".into(),
@@ -636,17 +628,17 @@ impl<'ws, 'out> Workstation<'out> {
     fn distribute_workspaces(
         workspaces: &'ws Workspaces<'out>,
         laptop: &'out Output,
-        externals: &[&'out Output],
+        externals: &NonEmptyVec<&'out Output>,
     ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
         let mut v = vec![];
         for workspace in &workspaces.0 {
             let target_output = match workspace.num {
                 7..=10 => laptop,
                 i @ 1..=6 => match externals.len() {
-                    1 => externals[0],
+                    1 => externals.first(),
                     2 => match i {
-                        1 => externals[0],
-                        2..=6 => externals[1],
+                        1 => externals.first(),
+                        2..=6 => externals.get(1).expect("checked the range above"),
                         _ => unreachable!("checked the range above"),
                     },
                     _ => {
@@ -684,11 +676,6 @@ impl<'ws, 'out> Workstation<'out> {
                     let Some(ref externals) = self.externals else {
                         return Err(Error::Plan("no external screens found".into()));
                     };
-                    let externals: Vec<&Output> = {
-                        let mut v = vec![externals.0];
-                        v.extend(&externals.1);
-                        v
-                    };
 
                     // shuffle around if required
                     let externals = match external_ordering {
@@ -709,12 +696,12 @@ impl<'ws, 'out> Workstation<'out> {
                                 )
                             }
 
-                            out
+                            &NonEmptyVec::new(out)
                         }
                     };
 
                     let workspace_settings =
-                        Self::distribute_workspaces(workspaces, laptop, &externals)?;
+                        Self::distribute_workspaces(workspaces, laptop, externals)?;
 
                     let mut output_settings: Vec<OutputSetting> =
                         externals.into_iter().map(|ext| ext.on()).collect();
@@ -746,18 +733,18 @@ impl<'ws, 'out> Workstation<'out> {
                         return Err(Error::Plan("no external screens found".into()));
                     };
 
-                    if !externals.1.is_empty() {
+                    if externals.len() != 1 {
                         return Err(Error::Plan(
                             "can only project with single external screen".into(),
                         ));
                     }
 
-                    let external = externals.0;
+                    let external = externals.first();
 
                     let workspace_settings = Self::projector(workspaces, laptop, external)?;
 
-                    let mut output_settings = vec![laptop.on(), externals.0.on()];
-                    output_settings.append(&mut externals.1.iter().map(|ext| ext.on()).collect());
+                    let mut output_settings = vec![laptop.on()];
+                    output_settings.extend(externals.iter().map(|ext| ext.on()));
                     output_settings.extend(
                         self.disconnected_externals
                             .iter()
@@ -775,7 +762,7 @@ impl<'ws, 'out> Workstation<'out> {
                 Some(laptop) => Ok(Self::all_on_laptop(
                     workspaces,
                     laptop,
-                    self.externals.clone(),
+                    self.externals.as_ref(),
                     self.disconnected_externals.clone(),
                 )),
             },
@@ -949,10 +936,8 @@ fn manage_screens(
 
         println!("=== external outputs:");
         match workstation.externals {
-            Some((first, ref rest)) => {
-                let mut outputs = vec![first];
-                outputs.extend(rest);
-                for output in outputs {
+            Some(ref externals) => {
+                for output in externals {
                     println!(
                         "{name} ({state})",
                         name = output.name,
@@ -975,7 +960,7 @@ fn manage_screens(
         Some(order) => ExternalOrdering::parse_from_str(
             order,
             match workstation.externals {
-                Some(ref externals) => externals.1.len() + 1,
+                Some(ref externals) => externals.len(),
                 None => 0,
             },
         )?,
