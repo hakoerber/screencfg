@@ -813,18 +813,6 @@ enum Setup {
     Projector,
 }
 
-impl From<cli::Setup> for Setup {
-    fn from(value: cli::Setup) -> Self {
-        match value {
-            cli::Setup::LaptopLeft => Self::LaptopLeft,
-            cli::Setup::LaptopRight => Self::LaptopRight,
-            cli::Setup::LaptopOnly => Self::LaptopOnly,
-            cli::Setup::ExternalOnly => Self::ExternalOnly,
-            cli::Setup::Projector => Self::Projector,
-        }
-    }
-}
-
 #[derive(Debug)]
 enum ExternalOrdering {
     Default,
@@ -963,14 +951,27 @@ fn manage_screens(
         None => ExternalOrdering::Default,
     };
 
-    let plan = if let Some(setup) = approach.setup {
-        workstation.plan(setup.into(), &workspaces, &external_ordering)?
-    } else {
-        workstation
+    let plan = match approach {
+        cli::Approach::LaptopLeft => {
+            workstation.plan(Setup::LaptopLeft, &workspaces, &external_ordering)?
+        }
+        cli::Approach::LaptopRight => {
+            workstation.plan(Setup::LaptopRight, &workspaces, &external_ordering)?
+        }
+        cli::Approach::LaptopOnly => {
+            workstation.plan(Setup::LaptopOnly, &workspaces, &external_ordering)?
+        }
+        cli::Approach::ExternalOnly => {
+            workstation.plan(Setup::ExternalOnly, &workspaces, &external_ordering)?
+        }
+        cli::Approach::Projector => {
+            workstation.plan(Setup::Projector, &workspaces, &external_ordering)?
+        }
+        cli::Approach::Best => workstation
             .plan(Setup::LaptopLeft, &workspaces, &external_ordering)
             .or_else(|_| workstation.plan(Setup::LaptopOnly, &workspaces, &external_ordering))
             .or_else(|_| workstation.plan(Setup::ExternalOnly, &workspaces, &external_ordering))
-            .map_err(|_err| Error::Plan("no plan fit with \"best\" strategy".into()))?
+            .map_err(|_err| Error::Plan("no plan fit with \"best\" strategy".into()))?,
     };
 
     if debug {
@@ -1038,7 +1039,7 @@ fn run() -> Result<(), Error> {
                 args.debug,
                 set_options.dry_run,
                 set_options.diagram,
-                set_options.approach,
+                set_options.setup,
                 set_options.custom_external_ordering.as_deref(),
             )?;
         }
@@ -1055,7 +1056,7 @@ fn run() -> Result<(), Error> {
                     args.debug,
                     watch_options.dry_run,
                     watch_options.diagram,
-                    watch_options.approach,
+                    watch_options.setup,
                     watch_options.custom_external_ordering.as_deref(),
                 )?;
             }
@@ -1080,7 +1081,7 @@ fn run() -> Result<(), Error> {
                         args.debug,
                         watch_options.dry_run,
                         watch_options.diagram,
-                        watch_options.approach,
+                        watch_options.setup,
                         watch_options.custom_external_ordering.as_deref(),
                     )
                 },

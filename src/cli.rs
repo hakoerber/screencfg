@@ -1,22 +1,13 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Copy, ValueEnum)]
-pub(crate) enum Setup {
+pub(crate) enum Approach {
     LaptopLeft,
     LaptopRight,
     LaptopOnly,
     ExternalOnly,
     Projector,
-}
-
-#[derive(Clone, Copy, Args)]
-#[group(multiple = false, required = true)]
-pub(crate) struct Approach {
-    #[arg(long)]
-    pub(crate) setup: Option<Setup>,
-
-    #[arg(long)]
-    pub(crate) best: bool,
+    Best,
 }
 
 #[derive(Parser)]
@@ -50,8 +41,8 @@ pub(crate) enum Cmd {
 
 #[derive(Args, Clone)]
 pub(crate) struct SetOptions {
-    #[command(flatten)]
-    pub(crate) approach: Approach,
+    #[arg(long)]
+    pub(crate) setup: Approach,
 
     #[arg(long)]
     pub(crate) custom_external_ordering: Option<String>,
@@ -65,8 +56,8 @@ pub(crate) struct SetOptions {
 
 #[derive(Args, Clone)]
 pub(crate) struct WatchOptions {
-    #[command(flatten)]
-    pub(crate) approach: Approach,
+    #[arg(long)]
+    pub(crate) setup: Approach,
 
     #[arg(long)]
     pub(crate) custom_external_ordering: Option<String>,
