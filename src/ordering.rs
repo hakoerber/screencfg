@@ -53,13 +53,13 @@ mod tests {
             }
         );
 
-        assert!(ExternalOrdering::parse_from_str("1,2,x", 3).is_err());
-        assert!(ExternalOrdering::parse_from_str("1,2;3", 3).is_err());
-        assert!(ExternalOrdering::parse_from_str("1,2,4", 3).is_err());
-        assert!(ExternalOrdering::parse_from_str("4,2,1", 3).is_err());
-        assert!(ExternalOrdering::parse_from_str("0,1,2", 3).is_err());
+        let _err = ExternalOrdering::parse_from_str("1,2,x", 3).unwrap_err();
+        let _err = ExternalOrdering::parse_from_str("1,2;3", 3).unwrap_err();
+        let _err = ExternalOrdering::parse_from_str("1,2,4", 3).unwrap_err();
+        let _err = ExternalOrdering::parse_from_str("4,2,1", 3).unwrap_err();
+        let _err = ExternalOrdering::parse_from_str("0,1,2", 3).unwrap_err();
 
-        assert!(ExternalOrdering::parse_from_str(KNOWN_GOOD, 2).is_err());
-        assert!(ExternalOrdering::parse_from_str(KNOWN_GOOD, 0).is_err());
+        let _err = ExternalOrdering::parse_from_str(KNOWN_GOOD, 2).unwrap_err();
+        let _err = ExternalOrdering::parse_from_str(KNOWN_GOOD, 0).unwrap_err();
     }
 }

@@ -48,7 +48,7 @@ xrandr = { path = "./xrandr" }
 tap = "1.0.1"
 
 [features]
-integration-test = ["i3/integration-test"]
+testing = ["i3/testing"]
 default = ["full"]
 full = [
   "clap/help",

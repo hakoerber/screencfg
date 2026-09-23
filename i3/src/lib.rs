@@ -112,20 +112,20 @@ pub trait Conn {
     fn command(&mut self, command: Command<'_>) -> Result<(), Error>;
 }
 
-#[cfg(any(test, feature = "integration-test"))]
+#[cfg(any(test, feature = "testing"))]
 pub enum MockSetting {
     LaptopOnly,
     ExternalOnly(usize),
     Mixed,
 }
 
-#[cfg(any(test, feature = "integration-test"))]
+#[cfg(any(test, feature = "testing"))]
 pub struct MockConnection {
     pub fail: bool,
     pub setting: MockSetting,
 }
 
-#[cfg(any(test, feature = "integration-test"))]
+#[cfg(any(test, feature = "testing"))]
 impl MockConnection {
     fn check_fail(&self) -> Result<(), Error> {
         if self.fail {
@@ -136,7 +136,7 @@ impl MockConnection {
     }
 }
 
-#[cfg(any(test, feature = "integration-test"))]
+#[cfg(any(test, feature = "testing"))]
 impl Conn for MockConnection {
     fn version(&mut self) -> Result<Version, Error> {
         self.check_fail()?;

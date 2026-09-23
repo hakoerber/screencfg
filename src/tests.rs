@@ -58,7 +58,7 @@ fn single_laptop() -> Result<(), Error> {
                 assert_eq!(
                     plan.commands()
                         .into_iter()
-                        .filter_map(|cmd| {
+                        .find_map(|cmd| {
                             match cmd {
                                 Command::Xrandr {
                                     program: _cmd,
@@ -72,7 +72,6 @@ fn single_laptop() -> Result<(), Error> {
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
-                        .next()
                         .unwrap(),
                     cmd
                 );
@@ -84,7 +83,7 @@ fn single_laptop() -> Result<(), Error> {
 }
 
 #[test]
-fn multiple_laptops() -> Result<(), Error> {
+fn multiple_laptops() {
     let laptop1 = Output {
         name: OutputName::new("eDP-1".to_owned()),
         class: OutputClass::Laptop,
@@ -101,20 +100,16 @@ fn multiple_laptops() -> Result<(), Error> {
 
     let workstation: Result<Workstation<'_>, Error> = outputs[..].try_into();
 
-    assert!(workstation.is_err());
-
-    Ok(())
+    let _err = workstation.unwrap_err();
 }
 
 #[test]
-fn no_screens() -> Result<(), Error> {
+fn no_screens() {
     let outputs = [];
 
     let workstation: Result<Workstation<'_>, Error> = outputs[..].try_into();
 
-    assert!(workstation.is_err());
-
-    Ok(())
+    let _err = workstation.unwrap_err();
 }
 
 #[test]
@@ -170,7 +165,7 @@ fn single_external() -> Result<(), Error> {
                 assert_eq!(
                     plan.commands()
                         .into_iter()
-                        .filter_map(|cmd| {
+                        .find_map(|cmd| {
                             match cmd {
                                 Command::Xrandr {
                                     program: _cmd,
@@ -184,7 +179,6 @@ fn single_external() -> Result<(), Error> {
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
-                        .next()
                         .unwrap(),
                     cmd
                 );
@@ -248,7 +242,7 @@ fn multiple_external() -> Result<(), Error> {
                 assert_eq!(
                     plan.commands()
                         .into_iter()
-                        .filter_map(|cmd| {
+                        .find_map(|cmd| {
                             match cmd {
                                 Command::Xrandr {
                                     program: _cmd,
@@ -262,7 +256,6 @@ fn multiple_external() -> Result<(), Error> {
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
-                        .next()
                         .unwrap(),
                     cmd
                 );
@@ -297,7 +290,7 @@ fn multiple_external() -> Result<(), Error> {
                 assert_eq!(
                     plan.commands()
                         .into_iter()
-                        .filter_map(|cmd| {
+                        .find_map(|cmd| {
                             match cmd {
                                 Command::Xrandr {
                                     program: _cmd,
@@ -311,7 +304,6 @@ fn multiple_external() -> Result<(), Error> {
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
-                        .next()
                         .unwrap(),
                     cmd
                 );
@@ -402,7 +394,7 @@ fn mixture() -> Result<(), Error> {
                 assert_eq!(
                     plan.commands()
                         .into_iter()
-                        .filter_map(|cmd| {
+                        .find_map(|cmd| {
                             match cmd {
                                 Command::Xrandr {
                                     program: _cmd,
@@ -416,7 +408,6 @@ fn mixture() -> Result<(), Error> {
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
-                        .next()
                         .unwrap(),
                     cmd
                 );
@@ -478,7 +469,7 @@ fn mixture() -> Result<(), Error> {
                 assert_eq!(
                     plan.commands()
                         .into_iter()
-                        .filter_map(|cmd| {
+                        .find_map(|cmd| {
                             match cmd {
                                 Command::Xrandr {
                                     program: _cmd,
@@ -492,7 +483,6 @@ fn mixture() -> Result<(), Error> {
                                 Command::MoveWorkspace { .. } => None,
                             }
                         })
-                        .next()
                         .unwrap(),
                     cmd
                 );
