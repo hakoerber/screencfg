@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process, time};
+use std::{path::PathBuf, process};
 
 use i3::Conn as _;
 
@@ -9,7 +9,6 @@ mod nonempty;
 mod ordering;
 mod output;
 mod plan;
-mod udev;
 mod workspace;
 mod workstation;
 
@@ -183,8 +182,6 @@ fn manage_screens(
     Ok(())
 }
 
-#[expect(clippy::print_stdout, reason = "main")]
-#[expect(clippy::print_stderr, reason = "main")]
 fn run() -> Result<(), Error> {
     let args = cli::Cli::parse();
 
@@ -201,52 +198,8 @@ fn run() -> Result<(), Error> {
                 set_options.custom_external_ordering.as_deref(),
             )?;
         }
-        cli::Cmd::Watch(watch_options) => {
-            // used to differentiate between multiple event streams / sockets. We only have one, so
-            // we can use any constant value.
-            const TOKEN: mio::Token = mio::Token(0);
-
-            let config = config::find(args.config.map(|path| PathBuf::from(path)).as_deref())?;
-
-            if watch_options.once {
-                manage_screens(
-                    config.as_ref(),
-                    args.debug,
-                    watch_options.dry_run,
-                    watch_options.diagram,
-                    watch_options.setup,
-                    watch_options.custom_external_ordering.as_deref(),
-                )?;
-            }
-
-            let socket = udev::EventListener::new(udev::Subsystem::Drm)?;
-
-            let mut stream = udev::EventStream::from_listener(socket, TOKEN)?;
-
-            let err = stream.handle(
-                |event_type| {
-                    matches!(
-                        event_type,
-                        udev::EventType::Add | udev::EventType::Remove | udev::EventType::Change
-                    )
-                },
-                move |event| {
-                    if args.debug {
-                        println!("{event}");
-                    }
-                    manage_screens(
-                        config.as_ref(),
-                        args.debug,
-                        watch_options.dry_run,
-                        watch_options.diagram,
-                        watch_options.setup,
-                        watch_options.custom_external_ordering.as_deref(),
-                    )
-                },
-                time::Duration::from_secs(1),
-            );
-
-            eprintln!("{err}");
+        cli::Cmd::Watch(_watch_options) => {
+            unimplemented!()
         }
     }
 

@@ -59,6 +59,4 @@ pub(crate) enum Error {
     ConfigFileOpen { path: PathBuf, err: io::Error },
     #[error("could not find config file at {path}", path = path.display())]
     ConfigNotFound { path: PathBuf },
-    #[error("udev error: {0}")]
-    Udev(#[from] crate::udev::Error),
 }

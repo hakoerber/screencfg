@@ -35,12 +35,6 @@ toml = { version = "1.*", default-features = false, features = [
   "parse",
   "serde",
 ] }
-udev = { version = "0.9.*", default-features = false, features = [
-  "mio",
-  "send",
-] }
-mio = { version = "1.*", default-features = false, features = ["os-poll"] }
-debounce = { version = "0.2.*", default-features = false }
 thiserror = { workspace = true }
 
 i3 = { path = "./i3" }
