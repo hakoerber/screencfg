@@ -21,15 +21,15 @@ pub enum OutputState {
 }
 
 impl TryFrom<&str> for OutputState {
-    type Error = Error;
+    type Error = error::OutputStateParseError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "connected" => Ok(Self::Connected),
             "disconnected" => Ok(Self::Disconnected),
-            _ => Err(Error::Parse(format!(
-                "unknown xrandr output state: {value}"
-            ))),
+            _ => Err(error::OutputStateParseError {
+                value: value.to_owned(),
+            }),
         }
     }
 }
@@ -45,10 +45,10 @@ impl Output {
             process::Command::new("xrandr")
                 .arg("--query")
                 .output()
-                .map_err(|err| Error::Command(err.to_string()))?
+                .map_err(|err| Error::CommandInvocation(err.to_string()))?
                 .stdout,
         )
-        .map_err(|err| Error::Command(err.to_string()))?
+        .map_err(|err| Error::CommandUtf8(err.to_string()))?
         .lines()
         .skip(1) // skip header
         .filter(|line| line.chars().next().is_some_and(char::is_alphanumeric))
@@ -59,9 +59,10 @@ impl Output {
                     name: OutputName::try_new(part_1.to_owned())?,
                     state: part_2.try_into()?,
                 }),
-                _ => Err(Error::Command(format!(
-                    "not enough output information in line: {line}"
-                ))),
+                _ => Err(Error::CommandOutputLineFormat {
+                    line: line.to_owned(),
+                    message: "not enough output information in line",
+                }),
             }
         })
         .collect()
