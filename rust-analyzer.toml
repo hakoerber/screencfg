@@ -1,3 +1,2 @@
-{
-  "rust_analyzer.cargo.features" = ["testing"]
-}
+[rust_analyzer.cargo]
+features = ["testing"]

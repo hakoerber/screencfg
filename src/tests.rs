@@ -5,22 +5,23 @@ enum PlanExpect<'cmd, 'ws, 'out> {
     Valid(Plan<'ws, 'out>, &'cmd str),
 }
 
-#[test]
-fn single_laptop() -> Result<(), Error> {
+#[tokio::test]
+async fn single_laptop() -> Result<(), Error> {
     let mut connection = i3::MockConnection {
         fail: false,
         setting: i3::MockSetting::LaptopOnly,
     };
 
     let mut outputs = connection
-        .outputs()?
+        .outputs()
+        .await?
         .into_iter()
         .map(TryInto::try_into)
         .collect::<Result<Vec<Output>, Error>>()?;
     outputs.sort();
 
     let workspaces = workspace::Workspaces::convert(
-        connection.workspaces()?,
+        connection.workspaces().await?,
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
 
@@ -112,22 +113,23 @@ fn no_screens() {
     let _err = workstation.unwrap_err();
 }
 
-#[test]
-fn single_external() -> Result<(), Error> {
+#[tokio::test]
+async fn single_external() -> Result<(), Error> {
     let mut connection = i3::MockConnection {
         fail: false,
         setting: i3::MockSetting::ExternalOnly(1),
     };
 
     let mut outputs = connection
-        .outputs()?
+        .outputs()
+        .await?
         .into_iter()
         .map(TryInto::try_into)
         .collect::<Result<Vec<Output>, Error>>()?;
     outputs.sort();
 
     let workspaces = workspace::Workspaces::convert(
-        connection.workspaces()?,
+        connection.workspaces().await?,
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
 
@@ -189,22 +191,23 @@ fn single_external() -> Result<(), Error> {
     Ok(())
 }
 
-#[test]
-fn multiple_external() -> Result<(), Error> {
+#[tokio::test]
+async fn multiple_external() -> Result<(), Error> {
     let mut connection = i3::MockConnection {
         fail: false,
         setting: i3::MockSetting::ExternalOnly(2),
     };
 
     let mut outputs = connection
-        .outputs()?
+        .outputs()
+        .await?
         .into_iter()
         .map(TryInto::try_into)
         .collect::<Result<Vec<Output>, Error>>()?;
     outputs.sort();
 
     let workspaces = workspace::Workspaces::convert(
-        connection.workspaces()?,
+        connection.workspaces().await?,
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
 
@@ -314,22 +317,23 @@ fn multiple_external() -> Result<(), Error> {
     Ok(())
 }
 
-#[test]
-fn mixture() -> Result<(), Error> {
+#[tokio::test]
+async fn mixture() -> Result<(), Error> {
     let mut connection = i3::MockConnection {
         fail: false,
         setting: i3::MockSetting::Mixed,
     };
 
     let mut outputs = connection
-        .outputs()?
+        .outputs()
+        .await?
         .into_iter()
         .map(TryInto::try_into)
         .collect::<Result<Vec<Output>, Error>>()?;
     outputs.sort();
 
     let workspaces = workspace::Workspaces::convert(
-        connection.workspaces()?,
+        connection.workspaces().await?,
         &outputs.iter().collect::<Vec<&Output>>(),
     )?;
 

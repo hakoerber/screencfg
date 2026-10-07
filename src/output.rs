@@ -75,9 +75,10 @@ impl<'out> Output {
         }
     }
 
-    pub(crate) fn findall(i3: &mut i3::Connection) -> Result<Vec<Self>, Error> {
+    pub(crate) async fn findall(i3: &mut i3::Connection) -> Result<Vec<Self>, Error> {
         let i3_outputs = i3
-            .outputs()?
+            .outputs()
+            .await?
             .into_iter()
             .filter(|output| output.active)
             .map(TryInto::try_into)

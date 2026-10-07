@@ -9,7 +9,7 @@ use super::Error;
 
 const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
     pub post_commands: Option<Vec<String>>,

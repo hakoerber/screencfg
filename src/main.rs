@@ -27,7 +27,7 @@ use self::{
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 enum Setup {
     LaptopLeft,
     LaptopRight,
@@ -37,7 +37,7 @@ enum Setup {
 }
 
 #[expect(clippy::print_stdout, reason = "high level function")]
-fn manage_screens(
+async fn manage_screens(
     config: Option<&config::Config>,
     debug: bool,
     dry_run: bool,
@@ -45,12 +45,12 @@ fn manage_screens(
     approach: cli::Approach,
     custom_external_ordering: Option<&str>,
 ) -> Result<(), Error> {
-    let mut i3_connection = i3::connect()?;
+    let mut i3_connection = i3::connect().await?;
 
-    let outputs = Output::findall(&mut i3_connection)?;
+    let outputs = Output::findall(&mut i3_connection).await?;
     let workstation: Workstation<'_> = (&*outputs).try_into()?;
 
-    let workspaces = i3_connection.workspaces()?;
+    let workspaces = i3_connection.workspaces().await?;
     let workspaces =
         workspace::Workspaces::convert(workspaces, &outputs.iter().collect::<Vec<&Output>>())?;
 
@@ -89,7 +89,7 @@ fn manage_screens(
         println!();
     }
 
-    i3_connection.command(i3::Command::Nop)?;
+    i3_connection.command(i3::Command::Nop).await?;
 
     let external_ordering = match custom_external_ordering {
         Some(order) => ExternalOrdering::parse_from_str(
@@ -150,7 +150,7 @@ fn manage_screens(
     }
 
     if !dry_run {
-        Plan::apply(&mut i3_connection, commands)?;
+        Plan::apply(&mut i3_connection, commands).await?;
     }
 
     if let Some(post_commands) = config.and_then(|c| c.post_commands.as_ref()) {
@@ -183,7 +183,7 @@ fn manage_screens(
 }
 
 #[expect(clippy::print_stderr, reason = "main")]
-fn run() -> Result<(), Error> {
+async fn run() -> Result<(), Error> {
     let args = cli::Cli::parse();
 
     match args.subcommand {
@@ -197,31 +197,40 @@ fn run() -> Result<(), Error> {
                 set_options.diagram,
                 set_options.setup,
                 set_options.custom_external_ordering.as_deref(),
-            )?;
+            )
+            .await?;
         }
         cli::Cmd::Watch(watch_options) => {
             let config = config::find(args.config.map(|path| PathBuf::from(path)).as_deref())?;
 
-            let i3_connection = i3::connect()?;
+            let i3_connection = i3::connect().await?;
+
+            let setter = || async {
+                manage_screens(
+                    config.as_ref(),
+                    args.debug,
+                    watch_options.dry_run,
+                    watch_options.diagram,
+                    watch_options.setup,
+                    watch_options.custom_external_ordering.as_deref(),
+                )
+                .await
+            };
+
+            setter().await?;
 
             let Err(err) = i3::start_event_listener::<_, Error>(
                 i3_connection,
                 Duration::from_millis(1000),
                 &[EventType::Output],
-                |event| {
+                async move |event| {
                     eprintln!("received event from i3: {event}");
-                    manage_screens(
-                        config.as_ref(),
-                        args.debug,
-                        watch_options.dry_run,
-                        watch_options.diagram,
-                        watch_options.setup,
-                        watch_options.custom_external_ordering.as_deref(),
-                    )?;
+                    setter().await?;
 
                     Ok::<(), Error>(())
                 },
-            );
+            )
+            .await;
 
             eprintln!("{err}");
         }
@@ -231,8 +240,9 @@ fn run() -> Result<(), Error> {
 }
 
 #[expect(clippy::print_stderr, reason = "main")]
-fn main() -> process::ExitCode {
-    process::ExitCode::from(match run() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> process::ExitCode {
+    process::ExitCode::from(match run().await {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{e}");

@@ -194,7 +194,7 @@ impl<'out> Plan<'_, 'out> {
         commands
     }
 
-    pub(crate) fn apply(
+    pub(crate) async fn apply(
         i3: &mut i3::Connection,
         commands: Vec<Command<'out, '_>>,
     ) -> Result<(), Error> {
@@ -252,13 +252,14 @@ impl<'out> Plan<'_, 'out> {
         }
 
         // do an explicit i3 reload to allow i3 to pick up the new outputs
-        i3.command(i3::Command::Reload)?;
+        i3.command(i3::Command::Reload).await?;
 
         for command in i3_commands {
             i3.command(i3::Command::MoveWorkspace {
                 number: command.num.into(),
                 output_name: (&command.output.name).into(),
-            })?;
+            })
+            .await?;
         }
 
         Ok(())

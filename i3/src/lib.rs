@@ -1,23 +1,64 @@
 use std::{
     borrow::Cow,
-    collections::{HashMap, hash_map::Entry},
     convert::Infallible,
     ffi::OsStr,
     fmt,
-    io::{Read, Write},
     ops::{Deref, DerefMut, Index},
-    os::unix::{ffi::OsStrExt as _, net},
+    os::unix::{ffi::OsStrExt as _, net::SocketAddr},
     path::PathBuf,
     process,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
     vec::IntoIter,
 };
 
+use serde::{Deserialize, Serialize};
+use tokio::{
+    io::{self, AsyncReadExt as _, AsyncWriteExt as _},
+    net,
+    sync::mpsc,
+    time,
+};
+use tokio_util::sync::CancellationToken;
+
+enum ReadResult<T, E> {
+    Ok(T),
+    Err(E),
+    Closed,
+    Cancelled,
+}
+
+impl<T, Es, Et> From<Result<T, Es>> for ReadResult<T, Et>
+where
+    Es: Into<Et>,
+{
+    fn from(value: Result<T, Es>) -> Self {
+        match value {
+            Ok(v) => Self::Ok(v),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
+pub enum TaskResult<T, E> {
+    Ok(T),
+    Err(E),
+    Cancelled,
+}
+
+impl<T, Es, Et> From<Result<T, Es>> for TaskResult<T, Et>
+where
+    Es: Into<Et>,
+{
+    fn from(value: Result<T, Es>) -> Self {
+        match value {
+            Ok(v) => Self::Ok(v),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
 mod error;
 pub use error::Error;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy)]
 pub struct WorkspaceNumber(usize);
@@ -111,16 +152,16 @@ impl From<&Command<'_>> for Cow<'static, str> {
 }
 
 pub trait Conn {
-    fn version(&mut self) -> Result<Version, Error>;
-    fn outputs(&mut self) -> Result<Outputs, Error>;
-    fn workspaces(&mut self) -> Result<Workspaces, Error>;
-    fn command(&mut self, command: Command<'_>) -> Result<(), Error>;
+    type Subscription: Subscribe;
+
+    fn version(&mut self) -> impl Future<Output = Result<Version, Error>>;
+    fn outputs(&mut self) -> impl Future<Output = Result<Outputs, Error>>;
+    fn workspaces(&mut self) -> impl Future<Output = Result<Workspaces, Error>>;
+    fn command(&mut self, command: Command<'_>) -> impl Future<Output = Result<(), Error>>;
     fn subscribe(
-        &mut self,
-        sender: mpsc::SyncSender<Result<EventPayload, Error>>,
-        debounce_time: Duration,
+        self,
         event_types: &[EventType],
-    ) -> Result<Infallible, Error>;
+    ) -> impl Future<Output = Result<Self::Subscription, Error>> + Send;
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -148,8 +189,14 @@ impl MockConnection {
 }
 
 #[cfg(any(test, feature = "testing"))]
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "true, but it's just for testing"
+)]
 impl Conn for MockConnection {
-    fn version(&mut self) -> Result<Version, Error> {
+    type Subscription = MockSubscription;
+
+    async fn version(&mut self) -> Result<Version, Error> {
         self.check_fail()?;
         Ok(Version {
             minor: 1,
@@ -158,7 +205,7 @@ impl Conn for MockConnection {
         })
     }
 
-    fn outputs(&mut self) -> Result<Outputs, Error> {
+    async fn outputs(&mut self) -> Result<Outputs, Error> {
         self.check_fail()?;
         match self.setting {
             MockSetting::LaptopOnly => Ok(Outputs(vec![Output {
@@ -207,7 +254,7 @@ impl Conn for MockConnection {
         }
     }
 
-    fn workspaces(&mut self) -> Result<Workspaces, Error> {
+    async fn workspaces(&mut self) -> Result<Workspaces, Error> {
         self.check_fail()?;
         match self.setting {
             MockSetting::LaptopOnly => Ok(Workspaces(vec![
@@ -305,32 +352,49 @@ impl Conn for MockConnection {
         }
     }
 
-    fn command(&mut self, _command: Command<'_>) -> Result<(), Error> {
+    async fn command(&mut self, _command: Command<'_>) -> Result<(), Error> {
         self.check_fail()?;
         Ok(())
     }
 
-    #[expect(clippy::infinite_loop, reason = "it's infallible")]
-    fn subscribe(
-        &mut self,
-        sender: mpsc::SyncSender<Result<EventPayload, Error>>,
+    async fn subscribe(self, _event_types: &[EventType]) -> Result<MockSubscription, Error> {
+        Ok(MockSubscription {})
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+pub struct MockSubscription;
+
+#[cfg(any(test, feature = "testing"))]
+#[expect(clippy::infinite_loop, reason = "it's for testing")]
+impl Subscribe for MockSubscription {
+    async fn listen(
+        self,
+        sender: mpsc::Sender<Result<EventPayload, Error>>,
         debounce_time: Duration,
-        _event_types: &[EventType],
-    ) -> Result<Infallible, Error> {
+        _cancellation_token: CancellationToken,
+    ) -> TaskResult<Infallible, Error> {
         loop {
-            sender.send(Ok(EventPayload::Output)).expect("channel open");
+            use std::thread;
+
+            sender
+                .send(Ok(EventPayload::Output))
+                .await
+                .expect("channel open");
             thread::sleep(debounce_time);
         }
     }
 }
 
-pub struct Connection(net::UnixStream);
+pub struct Connection(io::BufReader<net::UnixStream>);
 
 impl Conn for Connection {
-    fn version(&mut self) -> Result<Version, Error> {
-        Message::Version.send(self)?;
+    type Subscription = Subscription;
 
-        let response = Response::read(self)?;
+    async fn version(&mut self) -> Result<Version, Error> {
+        Message::Version.send(self).await?;
+
+        let response = Response::read(self).await?;
 
         match response {
             Response::Version(version) => Ok(version.into()),
@@ -345,9 +409,9 @@ impl Conn for Connection {
         }
     }
 
-    fn outputs(&mut self) -> Result<Outputs, Error> {
-        Message::Outputs.send(self)?;
-        let response = Response::read(self)?;
+    async fn outputs(&mut self) -> Result<Outputs, Error> {
+        Message::Outputs.send(self).await?;
+        let response = Response::read(self).await?;
 
         match response {
             Response::Outputs(outputs) => Ok(outputs.into()),
@@ -362,10 +426,10 @@ impl Conn for Connection {
         }
     }
 
-    fn workspaces(&mut self) -> Result<Workspaces, Error> {
-        Message::Workspaces.send(self)?;
+    async fn workspaces(&mut self) -> Result<Workspaces, Error> {
+        Message::Workspaces.send(self).await?;
 
-        let response = Response::read(self)?;
+        let response = Response::read(self).await?;
 
         match response {
             Response::Workspaces(workspaces) => Ok(workspaces.into()),
@@ -380,10 +444,10 @@ impl Conn for Connection {
         }
     }
 
-    fn command(&mut self, command: Command<'_>) -> Result<(), Error> {
-        Message::Command(command).send(self)?;
+    async fn command(&mut self, command: Command<'_>) -> Result<(), Error> {
+        Message::Command(command).send(self).await?;
 
-        let response = Response::read(self)?;
+        let response = Response::read(self).await?;
         match response {
             Response::Command(commands) => {
                 for payload in commands {
@@ -408,15 +472,10 @@ impl Conn for Connection {
         }
     }
 
-    fn subscribe(
-        &mut self,
-        sender: mpsc::SyncSender<Result<EventPayload, Error>>,
-        debounce_time: Duration,
-        event_types: &[EventType],
-    ) -> Result<Infallible, Error> {
-        Message::Subscribe(event_types).send(self)?;
+    async fn subscribe(mut self, event_types: &[EventType]) -> Result<Subscription, Error> {
+        Message::Subscribe(event_types).send(&mut self).await?;
 
-        let response = Response::read(self)?;
+        let response = Response::read(&mut self).await?;
 
         match response {
             Response::Version(_)
@@ -442,13 +501,109 @@ impl Conn for Connection {
             }
         }
 
-        // disable timeout so reads block
-        self.0.set_read_timeout(None)?;
+        Ok(Subscription { connection: self })
+    }
+}
 
-        let mut event_timestamps: HashMap<EventPayloadType, Instant> = HashMap::new();
+pub struct Cancelled;
+
+pub trait Subscribe
+where
+    Self: Sized,
+{
+    fn listen(
+        self,
+        sender: mpsc::Sender<Result<EventPayload, Error>>,
+        debounce_time: Duration,
+        cancellation_token: CancellationToken,
+    ) -> impl Future<Output = TaskResult<Infallible, Error>>;
+}
+
+pub struct Subscription {
+    connection: Connection,
+}
+
+/// * If the channel gets closed after we received an event, but before the event is handled,
+///   we will **not** run `f()`.
+///
+/// * `f()` will be called with the **first** received value in the debounce duration. All other
+///   values will be discarded
+async fn read_from_channel_with_debounce<V, F, T, E>(
+    mut channel: mpsc::Receiver<V>,
+    f: F,
+    duration: Duration,
+    cancellation_token: CancellationToken,
+) -> ReadResult<T, Error>
+where
+    F: AsyncFn(V) -> Result<T, Error>,
+{
+    let sleep = time::sleep(duration);
+    tokio::pin!(sleep);
+
+    match channel.recv().await {
+        Some(v) => loop {
+            tokio::select! {
+                _ = &mut sleep => {
+                    return match f(v).await {
+                        Ok(v) => ReadResult::Ok(v),
+                        Err(err) => ReadResult::Err(err),
+
+                    };
+                },
+                v = channel.recv() => match v {
+                    Some(v) => drop(v),
+                    None => return ReadResult::Closed,
+
+                },
+                () = cancellation_token.cancelled() => {
+                    return ReadResult::Cancelled;
+                }
+            }
+        },
+        None => return ReadResult::Closed,
+    }
+    // tokio::select! {
+    //     v = channel.recv() => {
+
+    //     },
+    //     () = time::sleep()
+    // }
+}
+
+impl Subscribe for Subscription {
+    async fn listen(
+        mut self,
+        sender: mpsc::Sender<Result<EventPayload, Error>>,
+        debounce_time: Duration,
+        cancellation_token: CancellationToken,
+    ) -> TaskResult<Infallible, Error> {
+        let (tx, rx) = mpsc::channel::<EventPayload>(100);
+
+        let debouncer = {
+            let sender = sender.clone();
+            let cancellation_token = cancellation_token.clone();
+            tokio::spawn(async move {
+                read_from_channel_with_debounce::<_, _, _, Error>(
+                    rx,
+                    async move |event| Ok(sender.send(Ok(event)).await.unwrap()),
+                    debounce_time,
+                    cancellation_token,
+                )
+            })
+        };
 
         loop {
-            let response = Response::read(self)?;
+            // Note that `Response::read` is *not* cancellation safe. But in case of shutdown,
+            // we do not care about remaining data in the receive buffer.
+            let response = tokio::select! {
+                response = Response::read(&mut self.connection) => match response {
+                    Ok(response) => response,
+                    Err(err) => return Err(err).into(),
+                },
+                () = cancellation_token.cancelled() => {
+                    return TaskResult::Cancelled;
+                }
+            };
 
             match response {
                 Response::Version(_)
@@ -460,25 +615,13 @@ impl Conn for Connection {
                         expected: ResponseType::SubscriptionEvent,
                         received: response.into(),
                     }))
+                    .await
                     .expect("channel open"),
                 Response::SubscriptionEvent(event_payload) => {
-                    let now = Instant::now();
-
-                    let event_type: EventPayloadType = event_payload.clone().into();
-
-                    // only emit event if there has been no event during `debounce_time`
-                    match event_timestamps.entry(event_type) {
-                        Entry::Occupied(mut entry) => {
-                            if now.duration_since(*entry.get()) > debounce_time {
-                                sender.send(Ok(event_payload)).expect("channel open");
-                                let _: Instant = entry.insert(now);
-                            }
-                        }
-                        Entry::Vacant(entry) => {
-                            sender.send(Ok(event_payload)).expect("channel open");
-                            let _: &mut Instant = entry.insert(now);
-                        }
-                    }
+                    let tx = tx.clone();
+                    tokio::spawn(async move { tx.send(event_payload).await.unwrap() })
+                        .await
+                        .expect("thread to not panic");
                 }
             }
         }
@@ -503,15 +646,16 @@ fn get_socketpath() -> Result<PathBuf, Error> {
     Ok(path)
 }
 
-pub fn connect() -> Result<Connection, Error> {
+pub async fn connect() -> Result<Connection, Error> {
     let socketpath = get_socketpath()?;
 
-    let socket = net::SocketAddr::from_pathname(socketpath)?;
+    let socket = SocketAddr::from_pathname(socketpath)?;
 
-    let stream = net::UnixStream::connect_addr(&socket)?;
-    stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+    let stream = net::UnixStream::connect_addr(&socket.into()).await?;
 
-    Ok(Connection(stream))
+    let buffer = io::BufReader::new(stream);
+
+    Ok(Connection(buffer))
 }
 
 /// This takes ownership of connection because event handling
@@ -526,37 +670,94 @@ pub fn connect() -> Result<Connection, Error> {
 /// > GET_WORKSPACES. If your program does not want to cope which such kinds
 /// > of race conditions (an event based library may not have a problem here),
 /// > I suggest you create a separate connection to receive events.
-pub fn start_event_listener<F, E>(
-    mut connection: Connection,
+pub async fn start_event_listener<F, E>(
+    connection: Connection,
     debounce_time: Duration,
-    event_types: &[EventType],
+    event_types: &'static [EventType],
     handler: F,
 ) -> Result<Infallible, E>
 where
-    F: Fn(EventPayload) -> Result<(), E> + Send,
-    E: From<Error> + Send,
+    F: AsyncFn(EventPayload) -> Result<(), E>,
+    E: From<Error>,
+    // this can be enabled when async_fn_traits is stabilized:
+    //
+    // for<'a> F::CallRefFuture<'a>: Send,
 {
-    let (tx, rx) = mpsc::sync_channel(0);
+    let (tx, mut rx) = mpsc::channel(100);
+    let cancellation_token = CancellationToken::new();
 
-    thread::scope(|scope| -> Result<(), E> {
-        let event_subscriber =
-            scope.spawn(move || connection.subscribe(tx, debounce_time, event_types));
+    let subscription = connection.subscribe(event_types).await?;
 
-        let event_handler = scope.spawn(move || -> Result<(), E> {
-            for event in rx {
-                handler(event?)?;
+    let event_subscriber = {
+        let cancellation_token = cancellation_token.clone();
+        tokio::spawn(async move {
+            subscription
+                .listen(tx, debounce_time, cancellation_token)
+                .await
+        })
+    };
+
+    // this can be enabled when async_fn_traits is stabilized, to run the handler
+    // in a separate tokio task:
+    //
+    // let event_handler_result = tokio::spawn(async move {
+    //     loop {
+    //         match rx.recv().await {
+    //             Some(event) => {
+    //                 let event = event?;
+    //                 let handler_result = handler(event).await;
+    //                 if let Err(err) = handler_result {
+    //                     break Err(err);
+    //                 }
+    //             }
+    //             None => break Ok(()),
+    //         }
+    //     }
+    // })
+    // .await
+    // .expect("event handler thread to not panic");
+
+    let event_handler_result: ReadResult<Infallible, E> = loop {
+        match rx.recv().await {
+            Some(event) => {
+                let event = event?;
+                let handler_result = handler(event).await;
+                if let Err(err) = handler_result {
+                    break Err(err).into();
+                }
             }
+            None => break ReadResult::Closed,
+        }
+    };
 
-            Ok(())
-        });
+    // Event handler finished, we can cancel the subscriber
+    cancellation_token.cancel();
 
-        event_handler.join().expect("thread to not panic")?;
-        let Err(err) = event_subscriber.join().expect("thread to not panic");
+    // Wait for subscriber to finish
+    let event_subscriber_result = event_subscriber
+        .await
+        .expect("event subscriber thread to not panic");
 
-        Err(err.into())
-    })?;
+    // Now we have a few scenarios, each being some error case:
+    //
+    // 1. The handler encountered an error. clean up and return it
+    // 2. The subscriber encountered an error. clean up and return it
+    // 3. Both the handler *and* the subscriber encountered an error. This could happen if the
+    //    subscriber encountered an error during cancellation. This points to some implementation
+    //    error and should never happen, so we panic
+    // 4. None encountered an error. Why are they finished, then? Implementation error, panic.
 
-    unreachable!()
+    #[expect(clippy::panic, reason = "we panic for programming errors")]
+    Err(match (event_handler_result, event_subscriber_result) {
+        (ReadResult::Closed | ReadResult::Cancelled, TaskResult::Cancelled) => {
+            panic!("threads finished unexpectedly without an error")
+        }
+        (ReadResult::Closed | ReadResult::Cancelled, TaskResult::Err(err)) => err.into(),
+        (ReadResult::Err(err), TaskResult::Cancelled) => err.into(),
+        (ReadResult::Err(_err1), TaskResult::Err(_err2)) => {
+            panic!("teardown of subscriber seems to have produced an error")
+        }
+    })
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -732,9 +933,9 @@ impl Message<'_> {
         Ok(message)
     }
 
-    fn send(self, socket: &mut Connection) -> Result<(), Error> {
+    async fn send(self, socket: &mut Connection) -> Result<(), Error> {
         let message = self.bytes()?;
-        socket.0.write_all(&message)?;
+        socket.0.write_all(&message).await?;
         Ok(())
     }
 }
@@ -856,15 +1057,23 @@ enum Response {
 }
 
 impl Response {
-    fn read(stream: &mut Connection) -> Result<Self, Error> {
-        let mut response = vec![
-            0;
-            "i3-ipc".chars().count().checked_add(4 + 4).ok_or_else(|| {
-                Error::Protocol("payload length overflowed".into())
-            })?
-        ];
+    async fn read(stream: &mut Connection) -> Result<Self, Error> {
+        let mut response =
+            vec![
+                0;
+                "i3-ipc"
+                    .chars()
+                    .count()
+                    .checked_add(
+                        // for response length
+                        4 +
+                        // for command
+                        4
+                    )
+                    .ok_or_else(|| { Error::Protocol("payload length overflowed".into()) })?
+            ];
 
-        stream.0.read_exact(&mut response)?;
+        let _bytes_count = stream.0.read_exact(&mut response).await?;
 
         if &response
             .get(0..6)
@@ -904,11 +1113,11 @@ impl Response {
                 .map_err(|_err| { Error::Protocol("u32 overflowed usize".into()) })?
         ];
 
-        stream.0.read_exact(&mut response)?;
+        let _bytes_count = stream.0.read_exact(&mut response).await?;
 
         // highest bit indicates event response
-        if response_command >> 31 == 1 {
-            let response_command = response_command & !(1 << 31);
+        if response_command >> 31_u8 == 1 {
+            let response_command = response_command & !(1 << 31_u8);
             Ok(Self::SubscriptionEvent(match response_command {
                 0 => EventPayload::Workspace(serde_json::from_slice(&response)?),
                 1 => {
