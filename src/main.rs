@@ -38,6 +38,7 @@ enum Setup {
 
 #[expect(clippy::print_stdout, reason = "high level function")]
 async fn manage_screens(
+    connection: &mut i3::Connection,
     config: Option<&config::Config>,
     debug: bool,
     dry_run: bool,
@@ -45,12 +46,10 @@ async fn manage_screens(
     approach: cli::Approach,
     custom_external_ordering: Option<&str>,
 ) -> Result<(), Error> {
-    let mut i3_connection = i3::connect().await?;
-
-    let outputs = Output::findall(&mut i3_connection).await?;
+    let outputs = Output::findall(connection).await?;
     let workstation: Workstation<'_> = (&*outputs).try_into()?;
 
-    let workspaces = i3_connection.workspaces().await?;
+    let workspaces = connection.workspaces().await?;
     let workspaces =
         workspace::Workspaces::convert(workspaces, &outputs.iter().collect::<Vec<&Output>>())?;
 
@@ -89,7 +88,7 @@ async fn manage_screens(
         println!();
     }
 
-    i3_connection.command(i3::Command::Nop).await?;
+    connection.command(i3::Command::Nop).await?;
 
     let external_ordering = match custom_external_ordering {
         Some(order) => ExternalOrdering::parse_from_str(
@@ -150,7 +149,7 @@ async fn manage_screens(
     }
 
     if !dry_run {
-        Plan::apply(&mut i3_connection, commands).await?;
+        Plan::apply(connection, commands).await?;
     }
 
     if let Some(post_commands) = config.and_then(|c| c.post_commands.as_ref()) {
@@ -190,7 +189,10 @@ async fn run() -> Result<(), Error> {
         cli::Cmd::Set(set_options) => {
             let config = config::find(args.config.map(|path| PathBuf::from(path)).as_deref())?;
 
+            let mut connection = i3::Connection::connect().await?;
+
             manage_screens(
+                &mut connection,
                 config.as_ref(),
                 args.debug,
                 set_options.dry_run,
@@ -203,10 +205,13 @@ async fn run() -> Result<(), Error> {
         cli::Cmd::Watch(watch_options) => {
             let config = config::find(args.config.map(|path| PathBuf::from(path)).as_deref())?;
 
-            let i3_connection = i3::connect().await?;
+            // two connections, as we do not want to mangle subscriptions with commands
+            let subscribe_connection = i3::Connection::connect().await?;
+            let mut command_connection = i3::Connection::connect().await?;
 
-            let setter = || async {
+            let mut setter = async || {
                 manage_screens(
+                    &mut command_connection,
                     config.as_ref(),
                     args.debug,
                     watch_options.dry_run,
@@ -219,18 +224,16 @@ async fn run() -> Result<(), Error> {
 
             setter().await?;
 
-            let Err(err) = i3::start_event_listener::<_, Error>(
-                i3_connection,
-                Duration::from_millis(1000),
-                &[EventType::Output],
-                async move |event| {
+            let subscription = subscribe_connection.subscribe(&[EventType::Output]).await?;
+
+            let Err(err) = subscription
+                .start_event_listener::<_, Error>(Duration::from_millis(1000), async move |event| {
                     eprintln!("received event from i3: {event}");
                     setter().await?;
 
                     Ok::<(), Error>(())
-                },
-            )
-            .await;
+                })
+                .await;
 
             eprintln!("{err}");
         }

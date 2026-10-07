@@ -15,7 +15,7 @@ workspace = true
 
 [workspace]
 resolver = "2"
-members = ["i3", "xrandr"]
+members = ["i3", "xrandr", "debounce"]
 
 [workspace.package]
 version = "0.4.0"
@@ -25,6 +25,7 @@ edition = "2024"
 serde = { version = "1.*", default-features = false }
 thiserror = { version = "2.0.*", default-features = false }
 tokio = { version = "1.53.2", default-features = false }
+tokio-util = { version = "0.7.*", default-features = false }
 
 [dependencies]
 clap = { version = "4.*", default-features = false, features = [

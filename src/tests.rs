@@ -1,4 +1,17 @@
-use super::{nonempty::NonEmptyVec, plan::Command, *};
+use i3::Conn as _;
+
+use super::{
+    Setup,
+    error::Error,
+    nonempty::NonEmptyVec,
+    ordering::ExternalOrdering,
+    output::{
+        Class as OutputClass, ConnectionState as OutputConnectionState, Name as OutputName, Output,
+    },
+    plan::{Command, Plan},
+    workspace,
+    workstation::Workstation,
+};
 
 enum PlanExpect<'cmd, 'ws, 'out> {
     Error,
@@ -7,9 +20,9 @@ enum PlanExpect<'cmd, 'ws, 'out> {
 
 #[tokio::test]
 async fn single_laptop() -> Result<(), Error> {
-    let mut connection = i3::MockConnection {
+    let mut connection = i3::tests::MockConnection {
         fail: false,
-        setting: i3::MockSetting::LaptopOnly,
+        setting: i3::tests::MockSetting::LaptopOnly,
     };
 
     let mut outputs = connection
@@ -115,9 +128,9 @@ fn no_screens() {
 
 #[tokio::test]
 async fn single_external() -> Result<(), Error> {
-    let mut connection = i3::MockConnection {
+    let mut connection = i3::tests::MockConnection {
         fail: false,
-        setting: i3::MockSetting::ExternalOnly(1),
+        setting: i3::tests::MockSetting::ExternalOnly(1),
     };
 
     let mut outputs = connection
@@ -193,9 +206,9 @@ async fn single_external() -> Result<(), Error> {
 
 #[tokio::test]
 async fn multiple_external() -> Result<(), Error> {
-    let mut connection = i3::MockConnection {
+    let mut connection = i3::tests::MockConnection {
         fail: false,
-        setting: i3::MockSetting::ExternalOnly(2),
+        setting: i3::tests::MockSetting::ExternalOnly(2),
     };
 
     let mut outputs = connection
@@ -319,9 +332,9 @@ async fn multiple_external() -> Result<(), Error> {
 
 #[tokio::test]
 async fn mixture() -> Result<(), Error> {
-    let mut connection = i3::MockConnection {
+    let mut connection = i3::tests::MockConnection {
         fail: false,
-        setting: i3::MockSetting::Mixed,
+        setting: i3::tests::MockSetting::Mixed,
     };
 
     let mut outputs = connection
