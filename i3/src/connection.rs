@@ -1,5 +1,3 @@
-use std::os::unix::net::SocketAddr;
-
 use tokio::{
     io::{self, AsyncReadExt as _, AsyncWriteExt as _},
     net,
@@ -7,7 +5,7 @@ use tokio::{
 
 use super::{
     Command, Error, EventType, Message, Outputs, Response, ResponseType, Subscribe, Subscription,
-    Version, Workspaces, get_socketpath,
+    Version, Workspaces,
 };
 
 pub trait Conn
@@ -16,7 +14,6 @@ where
 {
     type Subscription: Subscribe;
 
-    fn connect() -> impl Future<Output = Result<Self, Error>>;
     fn version(&mut self) -> impl Future<Output = Result<Version, Error>>;
     fn outputs(&mut self) -> impl Future<Output = Result<Outputs, Error>>;
     fn workspaces(&mut self) -> impl Future<Output = Result<Workspaces, Error>>;
@@ -30,6 +27,10 @@ where
 pub struct Connection(io::BufReader<net::UnixStream>);
 
 impl Connection {
+    pub(crate) fn new(from: io::BufReader<net::UnixStream>) -> Self {
+        Self(from)
+    }
+
     pub(crate) async fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
         self.0.write_all(data).await
     }
@@ -41,18 +42,6 @@ impl Connection {
 
 impl Conn for Connection {
     type Subscription = Subscription;
-
-    async fn connect() -> Result<Self, Error> {
-        let socketpath = get_socketpath()?;
-
-        let socket = SocketAddr::from_pathname(socketpath)?;
-
-        let stream = net::UnixStream::connect_addr(&socket.into()).await?;
-
-        let buffer = io::BufReader::new(stream);
-
-        Ok(Self(buffer))
-    }
 
     async fn version(&mut self) -> Result<Version, Error> {
         Message::Version.send(self).await?;

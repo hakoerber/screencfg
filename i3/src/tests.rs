@@ -1,3 +1,5 @@
+#![expect(clippy::unwrap_used, reason = "it's just for testing")]
+
 use std::{convert::Infallible, time::Duration};
 
 use tokio::sync::mpsc;
@@ -33,16 +35,8 @@ impl MockConnection {
     clippy::unused_async_trait_impl,
     reason = "true, but it's just for testing"
 )]
-#[expect(
-    clippy::unimplemented,
-    reason = "test code, not everything is implemented"
-)]
 impl Conn for MockConnection {
     type Subscription = MockSubscription;
-
-    async fn connect() -> Result<Self, Error> {
-        unimplemented!()
-    }
 
     async fn version(&mut self) -> Result<Version, Error> {
         self.check_fail()?;

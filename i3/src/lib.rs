@@ -2,7 +2,7 @@ use std::{
     ffi::OsStr,
     fmt,
     ops::{Deref, DerefMut, Index},
-    os::unix::ffi::OsStrExt as _,
+    os::unix::{ffi::OsStrExt as _, net::SocketAddr as StdSocketAddr},
     path::PathBuf,
     process,
     vec::IntoIter,
@@ -10,6 +10,7 @@ use std::{
 
 use nutype::nutype;
 use serde::Serialize;
+use tokio::net::unix::SocketAddr;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod tests;
@@ -25,6 +26,7 @@ pub use message::Command;
 pub(crate) use message::{EventPayload, Message, Response, ResponseType};
 pub(crate) use subscribe::Subscribe;
 pub use subscribe::{Subscription, TaskResult};
+use tokio::{io, net};
 
 #[nutype(derive(Debug, Clone, Copy, Display))]
 pub struct WorkspaceNumber(usize);
@@ -35,11 +37,12 @@ pub struct WorkspaceName(String);
 #[nutype(derive(Debug, Display), validate(not_empty))]
 pub struct OutputName(String);
 
-// todo ref outputname instead of string
 #[nutype(derive(Display))]
 pub struct OutputNameRef<'a>(&'a String);
 
-fn get_socketpath() -> Result<PathBuf, Error> {
+pub struct SocketPath(SocketAddr);
+
+pub fn get_socket_path() -> Result<SocketPath, Error> {
     let cmd = process::Command::new("i3")
         .arg("--get-socketpath")
         .output()?;
@@ -54,7 +57,17 @@ fn get_socketpath() -> Result<PathBuf, Error> {
 
     let path = PathBuf::from(string);
 
-    Ok(path)
+    let socket_addr = StdSocketAddr::from_pathname(path)?;
+
+    Ok(SocketPath(socket_addr.into()))
+}
+
+pub async fn connect(socket_path: &SocketPath) -> Result<Connection, Error> {
+    let stream = net::UnixStream::connect_addr(&socket_path.0).await?;
+
+    let buffer = io::BufReader::new(stream);
+
+    Ok(Connection::new(buffer))
 }
 
 #[derive(Debug)]

@@ -185,11 +185,13 @@ async fn manage_screens(
 async fn run() -> Result<(), Error> {
     let args = cli::Cli::parse();
 
+    let socket_path = i3::get_socket_path()?;
+
     match args.subcommand {
         cli::Cmd::Set(set_options) => {
             let config = config::find(args.config.map(|path| PathBuf::from(path)).as_deref())?;
 
-            let mut connection = i3::Connection::connect().await?;
+            let mut connection = i3::connect(&socket_path).await?;
 
             manage_screens(
                 &mut connection,
@@ -206,8 +208,8 @@ async fn run() -> Result<(), Error> {
             let config = config::find(args.config.map(|path| PathBuf::from(path)).as_deref())?;
 
             // two connections, as we do not want to mangle subscriptions with commands
-            let subscribe_connection = i3::Connection::connect().await?;
-            let mut command_connection = i3::Connection::connect().await?;
+            let subscribe_connection = i3::connect(&socket_path).await?;
+            let mut command_connection = i3::connect(&socket_path).await?;
 
             let mut setter = async || {
                 manage_screens(
