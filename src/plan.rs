@@ -6,8 +6,8 @@ use std::process;
 
 use super::{
     OutputActiveState, OutputSetting, OutputState, Setup, Workstation, error::Error,
-    nonempty::NonEmptyVec, ordering::ExternalOrdering, output::Output, workspace::WorkspaceNumber,
-    workspace::WorkspaceSetting, workspace::Workspaces,
+    nonempty::NonEmptyVec, ordering::ExternalOrdering, output::Output,
+    workspace::Number as WorkspaceNumber, workspace::WorkspaceSetting, workspace::Workspaces,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -338,7 +338,7 @@ impl<'ws, 'out> Workstation<'out> {
             workspace_settings: {
                 let mut v = vec![];
                 for workspace in &workspaces.0 {
-                    let target_output = match workspace.num.0 {
+                    let target_output = match workspace.num.into_inner() {
                         1..=5 => *externals.first(),
                         6..=10 => match externals.len() {
                             1 => *externals.first(),
@@ -374,7 +374,7 @@ impl<'ws, 'out> Workstation<'out> {
     ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
         let mut v = vec![];
         for workspace in &workspaces.0 {
-            let target_output = match workspace.num.0 {
+            let target_output = match workspace.num.into_inner() {
                 0..=9 => laptop,
                 10 => external,
                 _ => {
@@ -400,7 +400,7 @@ impl<'ws, 'out> Workstation<'out> {
     ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
         let mut v = vec![];
         for workspace in &workspaces.0 {
-            let target_output = match workspace.num.0 {
+            let target_output = match workspace.num.into_inner() {
                 7..=10 => laptop,
                 i @ 1..=6 => match externals.len() {
                     1 => externals.first(),

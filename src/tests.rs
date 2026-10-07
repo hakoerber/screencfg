@@ -99,13 +99,13 @@ async fn single_laptop() -> Result<(), Error> {
 #[test]
 fn multiple_laptops() {
     let laptop1 = Output {
-        name: OutputName::new("eDP-1".to_owned()),
+        name: OutputName::try_new("eDP-1".to_owned()).unwrap(),
         class: OutputClass::Laptop,
         connection_state: OutputConnectionState::Connected,
     };
 
     let laptop2 = Output {
-        name: OutputName::new("eDP-2".to_owned()),
+        name: OutputName::try_new("eDP-2".to_owned()).unwrap(),
         class: OutputClass::Laptop,
         connection_state: OutputConnectionState::Connected,
     };

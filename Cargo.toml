@@ -26,6 +26,7 @@ serde = { version = "1.*", default-features = false }
 thiserror = { version = "2.0.*", default-features = false }
 tokio = { version = "1.53.2", default-features = false }
 tokio-util = { version = "0.7.*", default-features = false }
+nutype = { version = "0.8.0", default-features = false, features = ["std"] }
 
 [dependencies]
 clap = { version = "4.*", default-features = false, features = [
@@ -39,6 +40,7 @@ toml = { version = "1.*", default-features = false, features = [
 ] }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+nutype = { workspace = true }
 tap = { version = "1.0.1", default-features = false }
 
 i3 = { path = "./i3" }
@@ -74,7 +76,6 @@ keyword_idents = "deny"
 let_underscore_drop = "deny"
 non_ascii_idents = "deny"
 non_local_definitions = "deny"
-single_use_lifetimes = "deny"
 unit_bindings = "deny"
 unreachable_pub = "deny"
 unsafe_code = { level = "forbid", priority = -1 }

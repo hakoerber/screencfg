@@ -1,5 +1,7 @@
 use std::{fmt, io, path::PathBuf};
 
+use super::{output, workspace};
+
 use thiserror::Error;
 
 #[derive(Debug)]
@@ -59,4 +61,8 @@ pub(crate) enum Error {
     ConfigFileOpen { path: PathBuf, err: io::Error },
     #[error("could not find config file at {path}", path = path.display())]
     ConfigNotFound { path: PathBuf },
+    #[error("output name validation failed: {0}")]
+    OutputNameValidation(#[from] output::NameError),
+    #[error("workspace name validation failed: {0}")]
+    WorkspaceNameValidation(#[from] workspace::NameError),
 }

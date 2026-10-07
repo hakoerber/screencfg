@@ -3,8 +3,8 @@ use std::{borrow::Cow, fmt};
 use serde::Deserialize;
 
 use super::{
-    Connection, Error, EventType, Output, OutputName, OutputNameRef, Outputs, Version, Workspace,
-    WorkspaceName, WorkspaceNumber, Workspaces,
+    Connection, Error, EventType, Output, OutputName, OutputNameError, OutputNameRef, Outputs,
+    Version, Workspace, WorkspaceName, WorkspaceNumber, Workspaces,
 };
 
 pub enum Command<'out> {
@@ -93,25 +93,29 @@ pub(crate) struct OutputPayload {
     primary: bool,
 }
 
-impl From<OutputPayload> for Output {
-    fn from(value: OutputPayload) -> Self {
-        Self {
-            name: value.name.into(),
+impl TryFrom<OutputPayload> for Output {
+    type Error = OutputNameError;
+
+    fn try_from(value: OutputPayload) -> Result<Self, Self::Error> {
+        Ok(Self {
+            name: OutputName::try_new(value.name)?,
             active: value.active,
             primary: value.primary,
-        }
+        })
     }
 }
 
-impl From<Vec<OutputPayload>> for Outputs {
-    fn from(value: Vec<OutputPayload>) -> Self {
-        Self(
+impl TryFrom<Vec<OutputPayload>> for Outputs {
+    type Error = OutputNameError;
+
+    fn try_from(value: Vec<OutputPayload>) -> Result<Self, Self::Error> {
+        Ok(Self(
             value
                 .into_iter()
                 .filter(|output| output.name != "xroot-0")
-                .map(Into::into)
-                .collect(),
-        )
+                .map(OutputPayload::try_into)
+                .collect::<Result<_, OutputNameError>>()?,
+        ))
     }
 }
 
@@ -124,19 +128,28 @@ pub(crate) struct WorkspacePayload {
     output: String,
 }
 
-impl From<WorkspacePayload> for Workspace {
-    fn from(value: WorkspacePayload) -> Self {
-        Self {
-            num: WorkspaceNumber(value.num),
-            name: WorkspaceName(value.name),
-            output: OutputName(value.output),
-        }
+impl TryFrom<WorkspacePayload> for Workspace {
+    type Error = Error;
+
+    fn try_from(value: WorkspacePayload) -> Result<Self, Self::Error> {
+        Ok(Self {
+            num: WorkspaceNumber::new(value.num),
+            name: WorkspaceName::try_new(value.name)?,
+            output: OutputName::try_new(value.output)?,
+        })
     }
 }
 
-impl From<Vec<WorkspacePayload>> for Workspaces {
-    fn from(value: Vec<WorkspacePayload>) -> Self {
-        Self(value.into_iter().map(Into::into).collect())
+impl TryFrom<Vec<WorkspacePayload>> for Workspaces {
+    type Error = Error;
+
+    fn try_from(value: Vec<WorkspacePayload>) -> Result<Self, Self::Error> {
+        Ok(Self(
+            value
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<_, Error>>()?,
+        ))
     }
 }
 

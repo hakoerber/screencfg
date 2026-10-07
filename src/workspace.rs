@@ -1,5 +1,7 @@
 use std::fmt;
 
+use nutype::nutype;
+
 use super::{Error, Output, OutputName};
 
 #[derive(Debug)]
@@ -14,10 +16,10 @@ impl<'out> Workspaces<'out> {
             workspaces
                 .into_iter()
                 .map(|from| {
-                    let output_name_from_i3_workspaces: OutputName = from.output.into();
+                    let output_name_from_i3_workspaces: OutputName = from.output.try_into()?;
                     Ok(Workspace {
                         num: from.num.into(),
-                        name: from.name.into(),
+                        name: from.name.try_into()?,
                         output: outputs
                             .iter()
                             .find(|output| output_name_from_i3_workspaces == output.name)
@@ -37,46 +39,36 @@ impl<'out> Workspaces<'out> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct WorkspaceName(String);
+#[nutype(derive(Debug, PartialEq, Eq, Display), validate(not_empty))]
+pub(crate) struct Name(String);
 
-impl fmt::Display for WorkspaceName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+impl TryFrom<i3::WorkspaceName> for Name {
+    type Error = NameError;
+
+    fn try_from(value: i3::WorkspaceName) -> Result<Self, Self::Error> {
+        Self::try_new(value.into_inner())
     }
 }
 
-impl From<i3::WorkspaceName> for WorkspaceName {
-    fn from(value: i3::WorkspaceName) -> Self {
-        Self(value.into_inner())
+#[nutype(derive(Debug, PartialEq, Eq, Copy, Clone, Display))]
+pub(crate) struct Number(usize);
+
+impl From<Number> for i3::WorkspaceNumber {
+    fn from(value: Number) -> Self {
+        Self::new(value.into_inner())
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub(crate) struct WorkspaceNumber(pub(crate) usize);
-
-impl fmt::Display for WorkspaceNumber {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<WorkspaceNumber> for i3::WorkspaceNumber {
-    fn from(value: WorkspaceNumber) -> Self {
-        Self::new(value.0)
-    }
-}
-
-impl From<i3::WorkspaceNumber> for WorkspaceNumber {
+impl From<i3::WorkspaceNumber> for Number {
     fn from(value: i3::WorkspaceNumber) -> Self {
-        Self(value.into_inner())
+        Self::new(value.into_inner())
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Workspace<'out> {
-    pub(crate) num: WorkspaceNumber,
-    pub(crate) name: WorkspaceName,
+    pub(crate) num: Number,
+    pub(crate) name: Name,
     pub(crate) output: &'out Output,
 }
 

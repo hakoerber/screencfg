@@ -1,18 +1,17 @@
 use std::{process, string::String};
 
+use nutype::nutype;
+
 mod error;
 
 pub use error::Error;
 
+#[nutype(derive(AsRef), validate(not_empty))]
 pub struct OutputName(String);
 
 impl OutputName {
     pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn into_string(self) -> String {
-        self.0
+        self.as_ref()
     }
 }
 
@@ -57,7 +56,7 @@ impl Output {
             let mut parts = line.split_whitespace();
             match (parts.next(), parts.next()) {
                 (Some(part_1), Some(part_2)) => Ok(Self {
-                    name: OutputName(part_1.to_owned()),
+                    name: OutputName::try_new(part_1.to_owned())?,
                     state: part_2.try_into()?,
                 }),
                 _ => Err(Error::Command(format!(

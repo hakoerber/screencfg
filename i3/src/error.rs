@@ -2,7 +2,7 @@ use std::{fmt, io};
 
 use thiserror::Error;
 
-use crate::ResponseType;
+use super::{OutputNameError, ResponseType, WorkspaceNameError};
 
 #[derive(Debug)]
 pub enum Msg {
@@ -55,6 +55,10 @@ pub enum Error {
     Command(Msg),
     #[error("protocol error: {0}")]
     Protocol(Msg),
+    #[error("output name validation failed: {0}")]
+    OutputNameValidation(#[from] OutputNameError),
+    #[error("workspace name validation failed: {0}")]
+    WorkspaceNameValidation(#[from] WorkspaceNameError),
 }
 
 impl From<io::Error> for Error {

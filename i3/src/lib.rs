@@ -8,6 +8,7 @@ use std::{
     vec::IntoIter,
 };
 
+use nutype::nutype;
 use serde::Serialize;
 
 #[cfg(any(test, feature = "testing"))]
@@ -25,72 +26,18 @@ pub(crate) use message::{EventPayload, Message, Response, ResponseType};
 pub(crate) use subscribe::Subscribe;
 pub use subscribe::{Subscription, TaskResult};
 
-#[derive(Debug, Clone, Copy)]
+#[nutype(derive(Debug, Clone, Copy, Display))]
 pub struct WorkspaceNumber(usize);
 
-impl WorkspaceNumber {
-    pub fn new(value: usize) -> Self {
-        Self(value)
-    }
-
-    pub fn into_inner(self) -> usize {
-        self.0
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[nutype(derive(Debug, PartialEq, Eq), validate(not_empty))]
 pub struct WorkspaceName(String);
 
-impl WorkspaceName {
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-}
-
-impl fmt::Display for WorkspaceNumber {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Debug)]
+#[nutype(derive(Debug, Display), validate(not_empty))]
 pub struct OutputName(String);
 
-impl OutputName {
-    pub fn new(value: String) -> Self {
-        Self(value)
-    }
-
-    pub fn into_string(self) -> String {
-        self.0
-    }
-}
-
-impl fmt::Display for OutputName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<String> for OutputName {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
+// todo ref outputname instead of string
+#[nutype(derive(Display))]
 pub struct OutputNameRef<'a>(&'a String);
-
-impl<'a> OutputNameRef<'a> {
-    pub fn new(value: &'a String) -> Self {
-        Self(value)
-    }
-}
-
-impl fmt::Display for OutputNameRef<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 fn get_socketpath() -> Result<PathBuf, Error> {
     let cmd = process::Command::new("i3")

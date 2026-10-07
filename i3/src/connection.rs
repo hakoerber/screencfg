@@ -77,7 +77,7 @@ impl Conn for Connection {
         let response = Response::read(self).await?;
 
         match response {
-            Response::Outputs(outputs) => Ok(outputs.into()),
+            Response::Outputs(outputs) => Ok(outputs.try_into()?),
             Response::Version(_)
             | Response::Workspaces(_)
             | Response::Command(_)
@@ -95,7 +95,7 @@ impl Conn for Connection {
         let response = Response::read(self).await?;
 
         match response {
-            Response::Workspaces(workspaces) => Ok(workspaces.into()),
+            Response::Workspaces(workspaces) => Ok(workspaces.try_into()?),
             Response::Version(_)
             | Response::Command(_)
             | Response::Outputs(_)

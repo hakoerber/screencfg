@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+nutype = { workspace = true, default-features = false, features = ["std"]}
 
 [lints]
 workspace = true

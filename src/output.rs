@@ -1,4 +1,6 @@
-use std::fmt;
+use std::{borrow::Borrow as _, fmt};
+
+use nutype::nutype;
 
 use i3::Conn as _;
 
@@ -21,7 +23,7 @@ impl TryFrom<i3::Output> for Output {
     type Error = Error;
 
     fn try_from(value: i3::Output) -> Result<Self, Self::Error> {
-        let name: Name = value.name.into();
+        let name = value.name.try_into()?;
 
         let class = Class::try_detect(&name)?;
 
@@ -38,7 +40,7 @@ impl TryFrom<xrandr::Output> for Output {
     type Error = Error;
 
     fn try_from(value: xrandr::Output) -> Result<Self, Self::Error> {
-        let name: Name = value.name.into();
+        let name = value.name.try_into()?;
 
         let class = Class::try_detect(&name)?;
 
@@ -149,55 +151,49 @@ impl Class {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[nutype(
+    derive(Debug, PartialEq, Eq, PartialOrd, Ord, AsRef, Display, Borrow),
+    validate(not_empty)
+)]
 pub(crate) struct Name(String);
 
 impl Name {
-    #[cfg(test)]
-    pub(crate) fn new(value: String) -> Self {
-        Self(value)
+    pub(crate) fn len(&self) -> usize {
+        self.as_ref().len()
     }
 
     pub(crate) fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    fn into_string(self) -> String {
-        self.0
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.as_ref()
     }
 }
 
-impl From<xrandr::OutputName> for Name {
-    fn from(value: xrandr::OutputName) -> Self {
-        Self(value.into_string())
+impl TryFrom<xrandr::OutputName> for Name {
+    type Error = NameError;
+
+    fn try_from(value: xrandr::OutputName) -> Result<Self, Self::Error> {
+        Self::try_new(value.into_inner())
     }
 }
 
-impl From<i3::OutputName> for Name {
-    fn from(value: i3::OutputName) -> Self {
-        Self(value.into_string())
+impl TryFrom<i3::OutputName> for Name {
+    type Error = NameError;
+
+    fn try_from(value: i3::OutputName) -> Result<Self, Self::Error> {
+        Self::try_new(value.into_inner())
     }
 }
 
-impl From<Name> for i3::OutputName {
-    fn from(value: Name) -> Self {
-        Self::new(value.into_string())
+impl TryFrom<Name> for i3::OutputName {
+    type Error = i3::OutputNameError;
+
+    fn try_from(value: Name) -> Result<Self, Self::Error> {
+        Self::try_new(value.into_inner())
     }
 }
 
 impl<'a> From<&'a Name> for i3::OutputNameRef<'a> {
     fn from(value: &'a Name) -> Self {
-        Self::new(&value.0)
-    }
-}
-
-impl fmt::Display for Name {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        Self::new(value.borrow())
     }
 }
 
