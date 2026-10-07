@@ -227,7 +227,7 @@ async fn run() -> Result<(), Error> {
             let subscription = subscribe_connection.subscribe(&[EventType::Output]).await?;
 
             let Err(err) = subscription
-                .start_event_listener::<_, Error>(Duration::from_millis(1000), async move |event| {
+                .start_event_listener::<_, Error>(Duration::from_millis(2000), async move |event| {
                     eprintln!("received event from i3: {event}");
                     setter().await?;
 
