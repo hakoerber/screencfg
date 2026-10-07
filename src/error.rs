@@ -1,4 +1,4 @@
-use std::{fmt, io, path::PathBuf};
+use std::{fmt, io, path::PathBuf, process::ExitCode};
 
 use super::{output, workspace};
 
@@ -65,4 +65,10 @@ pub(crate) enum Error {
     OutputNameValidation(#[from] output::NameError),
     #[error("workspace name validation failed: {0}")]
     WorkspaceNameValidation(#[from] workspace::NameError),
+}
+
+impl From<Error> for ExitCode {
+    fn from(_value: Error) -> Self {
+        Self::FAILURE
+    }
 }

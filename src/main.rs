@@ -244,14 +244,28 @@ async fn run() -> Result<(), Error> {
     Ok(())
 }
 
-#[expect(clippy::print_stderr, reason = "main")]
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> process::ExitCode {
-    process::ExitCode::from(match run().await {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("{e}");
-            1
+enum MainResult {
+    Success,
+    Failure(Error),
+}
+
+#[expect(clippy::print_stderr, reason = "needed to print failures")]
+impl process::Termination for MainResult {
+    fn report(self) -> process::ExitCode {
+        match self {
+            Self::Success => process::ExitCode::SUCCESS,
+            Self::Failure(e) => {
+                eprintln!("Error: {e}");
+                e.into()
+            }
         }
-    })
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> MainResult {
+    match run().await {
+        Ok(()) => MainResult::Success,
+        Err(err) => MainResult::Failure(err),
+    }
 }
