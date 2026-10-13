@@ -15,11 +15,15 @@ pub(crate) struct Config {
     pub post_commands: Option<Vec<String>>,
 }
 
+#[tracing::instrument]
 pub(crate) fn from_path(path: &Path) -> Result<Option<Config>, Error> {
     let content = match std::fs::read_to_string(path) {
         Ok(p) => p,
         Err(err) => match err.kind() {
-            std::io::ErrorKind::NotFound => return Ok(None),
+            std::io::ErrorKind::NotFound => {
+                tracing::debug!("config not found");
+                return Ok(None);
+            }
             _ => {
                 return Err(Error::ConfigFileOpen {
                     path: path.to_owned(),
@@ -29,11 +33,17 @@ pub(crate) fn from_path(path: &Path) -> Result<Option<Config>, Error> {
         },
     };
 
-    Ok(Some(toml::from_str(&content).map_err(|err| {
-        Error::InvalidConfig(err.to_string().into())
-    })?))
+    tracing::debug!("succesfully read config file");
+
+    let parsed_config =
+        toml::from_str(&content).map_err(|err| Error::InvalidConfig(err.to_string().into()))?;
+
+    tracing::debug!("succesfully parsed config file as toml");
+
+    Ok(Some(parsed_config))
 }
 
+#[tracing::instrument]
 pub(crate) fn find(path: Option<&Path>) -> Result<Option<Config>, Error> {
     match path {
         Some(path) => match from_path(path)? {
@@ -43,6 +53,7 @@ pub(crate) fn find(path: Option<&Path>) -> Result<Option<Config>, Error> {
             }),
         },
         None => {
+            tracing::debug!("no config path given, discovering");
             let mut config_home = match env::var(XDG_CONFIG_HOME) {
                 Ok(v) => Ok(PathBuf::from(v)),
                 Err(e) => match e {

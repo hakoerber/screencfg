@@ -1,5 +1,7 @@
 use std::{path::PathBuf, process, time::Duration};
 
+use tracing::Level;
+
 use i3::{Conn as _, EventType};
 
 mod cli;
@@ -181,11 +183,31 @@ async fn manage_screens(
     Ok(())
 }
 
+fn configure_tracing(level: Level) -> impl tracing::Subscriber {
+    tracing_subscriber::fmt()
+        .event_format(tracing_subscriber::fmt::format().compact())
+        .with_timer(tracing_subscriber::fmt::time::SystemTime)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE)
+        .with_ansi(true)
+        .with_max_level(level)
+        .with_target(true)
+        .finish()
+}
+
 #[expect(clippy::print_stderr, reason = "main")]
 async fn run() -> Result<(), Error> {
     let args = cli::Cli::parse();
 
+    let subscriber = configure_tracing(if args.debug {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    });
+
+    tracing::subscriber::set_global_default(subscriber)?;
+
     let socket_path = i3::get_socket_path()?;
+    tracing::debug!(%socket_path, "socket path found");
 
     match args.subcommand {
         cli::Cmd::Set(set_options) => {

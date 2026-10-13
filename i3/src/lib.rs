@@ -42,6 +42,19 @@ pub struct OutputNameRef<'a>(&'a String);
 
 pub struct SocketPath(SocketAddr);
 
+impl fmt::Display for SocketPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.0
+                .as_pathname()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "[unknown path]".to_owned())
+        )
+    }
+}
+
 pub fn get_socket_path() -> Result<SocketPath, Error> {
     let cmd = process::Command::new("i3")
         .arg("--get-socketpath")

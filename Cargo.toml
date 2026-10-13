@@ -45,6 +45,8 @@ tap = { version = "1.0.1", default-features = false }
 
 i3 = { path = "./i3" }
 xrandr = { path = "./xrandr" }
+tracing = { version = "0.1.44", default-features = false, features = ["attributes", "std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "fmt", "json"] }
 
 [features]
 testing = ["i3/testing"]

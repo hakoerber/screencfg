@@ -65,6 +65,8 @@ pub(crate) enum Error {
     OutputNameValidation(#[from] output::NameError),
     #[error("workspace name validation failed: {0}")]
     WorkspaceNameValidation(#[from] workspace::NameError),
+    #[error("installation of global tracing subscriber failed: {0}")]
+    TracingSetGlobalDefaultSubscriber(#[from] tracing::dispatcher::SetGlobalDefaultError),
 }
 
 impl From<Error> for ExitCode {
