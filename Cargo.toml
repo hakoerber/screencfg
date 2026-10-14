@@ -2,12 +2,12 @@
 name = "screencfg"
 version.workspace = true
 edition.workspace = true
-description = "Automatically configure your screen setup with i3"
+description = "Automatically configure your screen setup with sway"
 repository = "https://github.com/hakoerber/screencfg/"
 rust-version = "1.85.1"
 readme = "README.md"
 license-file = "LICENSE"
-keywords = ["i3", "xrandr"]
+keywords = ["sway"]
 categories = ["command-line-utilities"]
 
 [lints]
@@ -15,7 +15,7 @@ workspace = true
 
 [workspace]
 resolver = "2"
-members = ["i3", "xrandr", "debounce"]
+members = ["sway", "debounce", "nonempty"]
 
 [workspace.package]
 version = "0.4.0"
@@ -23,33 +23,42 @@ edition = "2024"
 
 [workspace.dependencies]
 serde = { version = "1.*", default-features = false }
-thiserror = { version = "2.0.*", default-features = false }
-tokio = { version = "1.53.2", default-features = false }
+thiserror = { version = "2.*", default-features = false }
+tokio = { version = "1.*", default-features = false }
 tokio-util = { version = "0.7.*", default-features = false }
-nutype = { version = "0.8.0", default-features = false, features = ["std"] }
+nutype = { version = "0.8.*", default-features = false, features = ["std"] }
+tracing = { version = "0.1.*", default-features = false }
+derive_more = { version = "2.*", default-features = false }
+tap = { version = "1.*", default-features = false }
 
 [dependencies]
 clap = { version = "4.*", default-features = false, features = [
   "std",
   "derive",
 ] }
-serde = { workspace = true, features = ["derive"] }
-toml = { version = "1.*", default-features = false, features = [
-  "parse",
-  "serde",
-] }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 nutype = { workspace = true }
-tap = { version = "1.0.1", default-features = false }
+tap = { workspace = true, default-features = false }
+tracing = { workspace = true, default-features = false, features = [
+  "attributes",
+  "std",
+] }
+derive_more = { workspace = true, default-features = false, features = [
+  "display",
+] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = [
+  "ansi",
+  "fmt",
+  "json",
+] }
 
-i3 = { path = "./i3" }
-xrandr = { path = "./xrandr" }
-tracing = { version = "0.1.44", default-features = false, features = ["attributes", "std"] }
-tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "fmt", "json"] }
+sway = { path = "./sway" }
+nonempty = { path = "./nonempty" }
 
 [features]
-testing = ["i3/testing"]
+testing = ["sway/testing"]
+testing-debug = []
 default = ["full"]
 full = [
   "clap/help",
@@ -69,6 +78,11 @@ lto = "fat"
 panic = "abort"
 codegen-units = 1
 rpath = false
+
+[dev-dependencies]
+pretty_assertions = { version = "1.4.1", default-features = false, features = [
+  "std",
+] }
 
 [workspace.lints.rust]
 absolute_paths_not_starting_with_crate = "deny"
@@ -199,7 +213,7 @@ unimplemented = "warn"
 unnecessary_safety_comment = "warn"
 unnecessary_safety_doc = "warn"
 unnecessary_self_imports = "warn"
-unneeded_field_pattern = "warn"
+unneeded_field_pattern = "allow"
 unseparated_literal_suffix = "warn"
 unused_result_ok = "warn"
 unwrap_used = "warn"

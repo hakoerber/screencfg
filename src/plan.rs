@@ -1,68 +1,65 @@
-use i3::Conn as _;
+use std::{fmt, iter};
 
-use std::ffi::OsStr;
-use std::fmt;
-use std::process;
+use nonempty::NonEmptyVec;
+use sway::Conn as _;
 
 use super::{
-    OutputActiveState, OutputSetting, OutputState, Setup, Workstation, error::Error,
-    nonempty::NonEmptyVec, ordering::ExternalOrdering, output::Output,
-    workspace::Number as WorkspaceNumber, workspace::WorkspaceSetting, workspace::Workspaces,
+    OutputActiveState, OutputSetting, Setup, WorkspaceSetting, Workstation, error::Error, output,
+    output::Output, workspace::Number as WorkspaceNumber, workspace::Workspaces,
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
 pub(crate) struct Plan<'ws, 'out> {
     pub(crate) output_settings: Vec<OutputSetting<'out>>,
     pub(crate) workspace_settings: Vec<WorkspaceSetting<'ws, 'out>>,
+    pub(crate) setup: Setup,
 }
 
 impl fmt::Display for Plan<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for output in &self.output_settings {
-            writeln!(f, "{output}")?;
+        for (i, output) in self.output_settings.iter().enumerate() {
+            let last = i
+                == self
+                    .output_settings
+                    .len()
+                    .checked_sub(1)
+                    .expect("len is nonzero");
+            if last {
+                if self.workspace_settings.is_empty() {
+                    write!(f, "{output}")?;
+                } else {
+                    writeln!(f, "{output}")?;
+                }
+            } else {
+                writeln!(f, "{output}")?;
+            }
         }
-        for workspace in &self.workspace_settings {
-            writeln!(f, "{workspace}")?;
+
+        for (i, workspace) in self.workspace_settings.iter().enumerate() {
+            let last = i
+                == self
+                    .workspace_settings
+                    .len()
+                    .checked_sub(1)
+                    .expect("len is nonzero");
+            if last {
+                write!(f, "{workspace}")?;
+            } else {
+                writeln!(f, "{workspace}")?;
+            }
         }
+
         Ok(())
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct Program(&'static str);
-
-impl AsRef<OsStr> for Program {
-    fn as_ref(&self) -> &OsStr {
-        self.0.as_ref()
-    }
-}
-
-impl fmt::Display for Program {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct Arg<'a>(&'a str);
-
-impl AsRef<OsStr> for Arg<'_> {
-    fn as_ref(&self) -> &OsStr {
-        self.0.as_ref()
-    }
-}
-
-impl Arg<'_> {
-    pub(crate) fn as_str(&self) -> &str {
-        self.0
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum Command<'out, 'args> {
-    Xrandr {
-        program: Program,
-        args: Vec<Arg<'args>>,
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+pub(crate) enum Command<'out> {
+    SetOutputState {
+        output: &'out Output,
+        state: OutputActiveState,
     },
     MoveWorkspace {
         num: WorkspaceNumber,
@@ -70,21 +67,12 @@ pub(crate) enum Command<'out, 'args> {
     },
 }
 
-impl fmt::Display for Command<'_, '_> {
+impl fmt::Display for Command<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::Xrandr {
-                ref program,
-                ref args,
-            } => write!(
-                f,
-                "{} {}",
-                program,
-                args.iter()
-                    .map(Arg::as_str)
-                    .collect::<Vec<&str>>()
-                    .join(" ")
-            ),
+            Self::SetOutputState { output, ref state } => {
+                write!(f, "setting output {output} to {state}")
+            }
             Self::MoveWorkspace { num, output } => {
                 write!(f, "move workspace {num} to {}", output.name)
             }
@@ -97,18 +85,21 @@ impl<'out> Plan<'_, 'out> {
         let active_outputs = self
             .output_settings
             .iter()
-            .filter(|setting| setting.state == OutputState::Connected(OutputActiveState::On))
+            .filter(|setting| match **setting {
+                OutputSetting::Unchanged { output } => output.state.is_active(),
+                OutputSetting::Change { output: _, state } => state.is_active(),
+            })
             .collect::<Vec<_>>();
 
         let padding_top = active_outputs
             .iter()
-            .map(|setting| "─".repeat(setting.output.name.len()))
+            .map(|setting| "─".repeat(setting.output().name.len()))
             .collect::<Vec<_>>()
             .join("─┬─");
 
         let padding_bottom = active_outputs
             .iter()
-            .map(|setting| "─".repeat(setting.output.name.len()))
+            .map(|setting| "─".repeat(setting.output().name.len()))
             .collect::<Vec<_>>()
             .join("─┴─");
 
@@ -128,7 +119,7 @@ impl<'out> Plan<'_, 'out> {
             "┆ │ {} │ ┆",
             active_outputs
                 .into_iter()
-                .map(|setting| setting.output.name.as_str())
+                .map(|setting| setting.output().name.as_str())
                 .collect::<Vec<_>>()
                 .join(" │ ")
         )?;
@@ -146,59 +137,46 @@ impl<'out> Plan<'_, 'out> {
         Ok(())
     }
 
-    pub(crate) fn commands(&'out self) -> Vec<Command<'out, 'out>> {
+    pub(crate) fn commands(&'out self) -> Vec<Command<'out>> {
         let mut commands = vec![];
-        let mut args = vec![];
-
-        let mut left: Option<&OutputSetting<'_>> = None;
 
         for setting in &self.output_settings {
-            args.push(Arg("--output"));
-            args.push(Arg(setting.output.name.as_str()));
-
-            match setting.state {
-                OutputState::Connected(OutputActiveState::On) => {
-                    args.push(Arg("--auto"));
-                    if let Some(left) = left {
-                        args.push(Arg("--right-of"));
-                        args.push(Arg(left.output.name.as_str()));
-                    }
-                    left = Some(setting);
-                }
-                OutputState::Connected(OutputActiveState::Off) | OutputState::Disconnected => {
-                    args.push(Arg("--off"));
+            match *setting {
+                OutputSetting::Unchanged { output: _ } => (),
+                OutputSetting::Change { output, state } => {
+                    commands.push(Command::SetOutputState { output, state });
                 }
             }
         }
 
-        commands.push(Command::Xrandr {
-            program: Program("xrandr"),
-            args,
-        });
-
         for setting in &self.workspace_settings {
-            let from = &setting.workspace.output;
-            let to = &setting.output;
+            match *setting {
+                WorkspaceSetting::Unchanged { workspace: _ } => (),
+                WorkspaceSetting::Change { workspace, output } => {
+                    let from = workspace.output;
+                    let to = output;
 
-            assert_ne!(
-                from, to,
-                "moving workspace to its current location, logic error"
-            );
+                    assert_ne!(
+                        from.name, to.name,
+                        "moving workspace to its current location, logic error"
+                    );
 
-            commands.push(Command::MoveWorkspace {
-                num: setting.workspace.num,
-                output: to,
-            });
+                    commands.push(Command::MoveWorkspace {
+                        num: workspace.num,
+                        output: to,
+                    });
+                }
+            }
         }
 
         commands
     }
 
     pub(crate) async fn apply(
-        i3: &mut i3::Connection,
-        commands: Vec<Command<'out, '_>>,
+        sway: &mut sway::Connection,
+        commands: Vec<Command<'out>>,
     ) -> Result<(), Error> {
-        // we need to do the xrandr commands first, as i3 may create new workspaces automatically on newly
+        // we need to do the output commands first, as sway may create new workspaces automatically on newly
         // created outputs.
 
         pub(crate) enum Either<A, B> {
@@ -206,9 +184,9 @@ impl<'out> Plan<'_, 'out> {
             B(B),
         }
 
-        pub(crate) struct XrandrCommand<'args> {
-            program: Program,
-            args: Vec<Arg<'args>>,
+        pub(crate) struct SetOutputState<'out> {
+            output: &'out Output,
+            state: OutputActiveState,
         }
 
         pub(crate) struct MoveWorkspace<'out> {
@@ -216,15 +194,17 @@ impl<'out> Plan<'_, 'out> {
             output: &'out Output,
         }
 
-        let (xrandr_commands, i3_commands) = commands
+        let (output_commands, workspace_commands) = commands
             .into_iter()
             .map(|command| match command {
-                Command::Xrandr { program, args } => Either::A(XrandrCommand { program, args }),
+                Command::SetOutputState { output, state } => {
+                    Either::A(SetOutputState { output, state })
+                }
                 Command::MoveWorkspace { num, output } => Either::B(MoveWorkspace { num, output }),
             })
             .fold(
                 (Vec::new(), Vec::new()),
-                |mut vecs: (Vec<XrandrCommand<'_>>, Vec<MoveWorkspace<'_>>), r| match r {
+                |mut vecs: (Vec<SetOutputState<'_>>, Vec<MoveWorkspace<'_>>), r| match r {
                     Either::A(cmd) => {
                         vecs.0.push(cmd);
                         vecs
@@ -236,26 +216,30 @@ impl<'out> Plan<'_, 'out> {
                 },
             );
 
-        for command in xrandr_commands {
-            let output = process::Command::new(command.program)
-                .args(command.args)
-                .output()
-                .map_err(|e| Error::Command(e.to_string().into()))?;
-
-            if !output.status.success() {
-                return Err(Error::Apply(
-                    String::from_utf8(output.stderr)
-                        .map_err(|err| Error::Command(err.to_string().into()))?
-                        .into(),
-                ));
+        for command in output_commands {
+            match command.state {
+                OutputActiveState::On { position } => {
+                    sway.command(sway::Command::Output {
+                        output_name: (&command.output.name).into(),
+                        state: sway::OutputState::Enabled {
+                            refresh_rate: command.output.mode.refresh_rate.into(),
+                            position: position.into(),
+                        },
+                    })
+                    .await?;
+                }
+                OutputActiveState::Off => {
+                    sway.command(sway::Command::Output {
+                        output_name: (&command.output.name).into(),
+                        state: sway::OutputState::Disabled,
+                    })
+                    .await?;
+                }
             }
         }
 
-        // do an explicit i3 reload to allow i3 to pick up the new outputs
-        i3.command(i3::Command::Reload).await?;
-
-        for command in i3_commands {
-            i3.command(i3::Command::MoveWorkspace {
+        for command in workspace_commands {
+            sway.command(sway::Command::MoveWorkspace {
                 number: command.num.into(),
                 output_name: (&command.output.name).into(),
             })
@@ -270,82 +254,92 @@ impl<'ws, 'out> Workstation<'out> {
     fn all_on_laptop(
         workspaces: &'ws Workspaces<'out>,
         laptop: &'out Output,
-        externals: Option<&NonEmptyVec<&'out Output>>,
-        disconnected_externals: &[&'out Output],
+        monitors: Option<&NonEmptyVec<&'out Output>>,
+        setup: Setup,
     ) -> Plan<'ws, 'out> {
+        let output_settings = {
+            let mut outputs = vec![laptop.set(OutputActiveState::On {
+                position: output::Position::null(),
+            })];
+            outputs.append(&mut match monitors {
+                None => vec![],
+                Some(monitors) => monitors
+                    .iter()
+                    .map(|ext| ext.set(OutputActiveState::Off))
+                    .collect(),
+            });
+            outputs
+        };
+
+        let workspace_settings = workspaces
+            .0
+            .iter()
+            .map(|workspace| {
+                if workspace.output.name == laptop.name {
+                    WorkspaceSetting::Unchanged { workspace }
+                } else {
+                    WorkspaceSetting::Change {
+                        workspace,
+                        output: laptop,
+                    }
+                }
+            })
+            .collect();
+
         Plan {
-            output_settings: {
-                let mut outputs = vec![laptop.on()];
-                outputs.append(&mut match externals {
-                    None => vec![],
-                    Some(externals) => externals.iter().map(|ext| ext.off()).collect(),
-                });
-                outputs.extend(disconnected_externals.iter().map(|output| output.off()));
-                outputs
-            },
-            workspace_settings: workspaces
-                .0
-                .iter()
-                .filter(|workspace| workspace.output != laptop)
-                .map(|workspace| WorkspaceSetting {
-                    workspace,
-                    output: laptop,
-                })
-                .collect(),
+            output_settings,
+            workspace_settings,
+            setup,
         }
     }
 
-    fn all_on_external(
+    fn all_on_monitor(
         workspaces: &'ws Workspaces<'out>,
         laptop: Option<&'out Output>,
-        externals: &NonEmptyVec<&'out Output>,
-        disconnected_externals: &[&'out Output],
-        external_ordering: &ExternalOrdering,
+        monitors: &NonEmptyVec<&'out Output>,
+        max_output_height: output::Height,
+        setup: Setup,
     ) -> Result<Plan<'ws, 'out>, Error> {
-        // shuffle around if required
-        let externals = match *external_ordering {
-            ExternalOrdering::Default => externals,
-            ExternalOrdering::Custom { ref order } => {
-                let mut out = Vec::with_capacity(externals.len());
-                assert_eq!(
-                    order.len(),
-                    externals.len(),
-                    "assured during creation of order"
-                );
-
-                for order in order {
-                    out.push(
-                        *externals
-                            .get(order.checked_sub(1).expect("order is always positive"))
-                            .expect("order contains incrementing integers"),
-                    );
-                }
-
-                &NonEmptyVec::new(out)
-            }
-        };
-
         Ok(Plan {
             output_settings: {
-                let mut outputs: Vec<_> = externals.iter().map(|output| output.on()).collect();
+                // keeping track of horizontal position, from left to right
+                let mut pos_x_cursor = output::PosX(0);
+
+                let mut outputs: Vec<_> = monitors
+                    .iter()
+                    .map(|output| {
+                        let out = output.set(OutputActiveState::On {
+                            position: output::Position {
+                                x: pos_x_cursor,
+                                y: max_output_height
+                                    .sub(output.mode.height)
+                                    .end()
+                                    .expect("always positive, as max_height >= height"),
+                            },
+                        });
+
+                        // advance cursor to the right
+                        pos_x_cursor.add(output::PosX(output.mode.width.into_inner()));
+                        out
+                    })
+                    .collect();
 
                 if let Some(laptop) = laptop {
-                    outputs.push(laptop.off());
+                    outputs.push(laptop.set(OutputActiveState::Off));
                 }
-                outputs.extend(disconnected_externals.iter().map(|output| output.off()));
                 outputs
             },
             workspace_settings: {
                 let mut v = vec![];
                 for workspace in &workspaces.0 {
                     let target_output = match workspace.num.into_inner() {
-                        1..=5 => *externals.first(),
-                        6..=10 => match externals.len() {
-                            1 => *externals.first(),
-                            2 => externals.get(1).expect("checked len above"),
+                        1..=5 => *monitors.first(),
+                        6..=10 => match monitors.len() {
+                            1 => *monitors.first(),
+                            2 => monitors.get(1).expect("checked len above"),
                             _ => {
                                 return Err(Error::InvalidSetup(
-                                    "more than 2 external monitors not supported".into(),
+                                    "more than 2 monitor monitors not supported".into(),
                                 ));
                             }
                         },
@@ -355,63 +349,88 @@ impl<'ws, 'out> Workstation<'out> {
                             ));
                         }
                     };
-                    if workspace.output != target_output {
-                        v.push(WorkspaceSetting {
-                            workspace,
-                            output: target_output,
+                    {
+                        v.push(if workspace.output.name == target_output.name {
+                            WorkspaceSetting::Unchanged { workspace }
+                        } else {
+                            WorkspaceSetting::Change {
+                                workspace,
+                                output: target_output,
+                            }
                         });
                     }
                 }
                 v
             },
+            setup,
         })
     }
 
     fn projector(
         workspaces: &'ws Workspaces<'out>,
         laptop: &'out Output,
-        external: &'out Output,
-    ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
-        let mut v = vec![];
+        monitor: &'out Output,
+        setup: Setup,
+    ) -> Result<Plan<'ws, 'out>, Error> {
+        let mut workspace_settings = vec![];
         for workspace in &workspaces.0 {
             let target_output = match workspace.num.into_inner() {
                 0..=9 => laptop,
-                10 => external,
+                10 => monitor,
                 _ => {
                     return Err(Error::InvalidSetup(
                         "only workspaces between 1 and 10 are supported".into(),
                     ));
                 }
             };
-            if workspace.output != target_output {
-                v.push(WorkspaceSetting {
+            workspace_settings.push(if workspace.output.name == target_output.name {
+                WorkspaceSetting::Unchanged { workspace }
+            } else {
+                WorkspaceSetting::Change {
                     workspace,
                     output: target_output,
-                });
-            }
+                }
+            });
         }
-        Ok(v)
+
+        let mut output_settings = vec![monitor.set(OutputActiveState::On {
+            position: output::Position::null(),
+        })];
+
+        // put laptop below projector output, aligned left
+        output_settings.push(laptop.set(OutputActiveState::On {
+            position: output::Position {
+                x: output::PosX(0),
+                y: output::PosY(monitor.mode.height.into_inner()),
+            },
+        }));
+
+        Ok(Plan {
+            output_settings,
+            workspace_settings,
+            setup,
+        })
     }
 
     fn distribute_workspaces(
         workspaces: &'ws Workspaces<'out>,
         laptop: &'out Output,
-        externals: &NonEmptyVec<&'out Output>,
+        monitors: &NonEmptyVec<&'out Output>,
     ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
         let mut v = vec![];
         for workspace in &workspaces.0 {
             let target_output = match workspace.num.into_inner() {
                 7..=10 => laptop,
-                i @ 1..=6 => match externals.len() {
-                    1 => externals.first(),
+                i @ 1..=6 => match monitors.len() {
+                    1 => monitors.first(),
                     2 => match i {
-                        1 => externals.first(),
-                        2..=6 => externals.get(1).expect("checked the range above"),
+                        1 => monitors.first(),
+                        2..=6 => monitors.get(1).expect("checked the range above"),
                         _ => unreachable!("checked the range above"),
                     },
                     _ => {
                         return Err(Error::InvalidSetup(
-                            "more than 2 external monitors not supported".into(),
+                            "more than 2 monitor monitors not supported".into(),
                         ));
                     }
                 },
@@ -421,12 +440,14 @@ impl<'ws, 'out> Workstation<'out> {
                     ));
                 }
             };
-            if workspace.output != target_output {
-                v.push(WorkspaceSetting {
+            v.push(if workspace.output.name == target_output.name {
+                WorkspaceSetting::Unchanged { workspace }
+            } else {
+                WorkspaceSetting::Change {
                     workspace,
                     output: target_output,
-                });
-            }
+                }
+            });
         }
         Ok(v)
     }
@@ -435,116 +456,127 @@ impl<'ws, 'out> Workstation<'out> {
         &self,
         setup: Setup,
         workspaces: &'ws Workspaces<'out>,
-        external_ordering: &ExternalOrdering,
     ) -> Result<Plan<'ws, 'out>, Error> {
-        match setup {
-            setup @ (Setup::LaptopLeft | Setup::LaptopRight) => match self.laptop {
-                None => Err(Error::Plan("no laptop screen found".into())),
-                Some(laptop) => {
-                    let Some(ref externals) = self.externals else {
-                        return Err(Error::Plan("no external screens found".into()));
-                    };
-
-                    // shuffle around if required
-                    let externals = match *external_ordering {
-                        ExternalOrdering::Default => externals,
-                        ExternalOrdering::Custom { ref order } => {
-                            let mut out = Vec::with_capacity(externals.len());
-                            assert_eq!(
-                                order.len(),
-                                externals.len(),
-                                "assured during creation of order"
-                            );
-
-                            for order in order {
-                                out.push(
-                                    *externals
-                                        .get(
-                                            order.checked_sub(1).expect("order is always positive"),
-                                        )
-                                        .expect("order contains incrementing integers"),
-                                );
-                            }
-
-                            &NonEmptyVec::new(out)
-                        }
-                    };
+        match *self {
+            Self::LaptopOnly { laptop } => match setup {
+                Setup::LaptopLeft | Setup::LaptopRight | Setup::MonitorOnly => {
+                    Err(Error::Plan("no monitor outputs found".into()))
+                }
+                Setup::LaptopOnly => Ok(Self::all_on_laptop(workspaces, laptop, None, setup)),
+                Setup::Projector => {
+                    Err(Error::Plan("no monitor screen for projector found".into()))
+                }
+            },
+            Self::MonitorOnly { ref monitors } => match setup {
+                Setup::LaptopLeft | Setup::LaptopRight | Setup::LaptopOnly => {
+                    Err(Error::Plan("no laptop output found".into()))
+                }
+                Setup::MonitorOnly => Self::all_on_monitor(
+                    workspaces,
+                    None,
+                    monitors,
+                    self.max_output_height(),
+                    setup,
+                ),
+                Setup::Projector => Err(Error::Plan("no projector possible without laptop".into())),
+            },
+            Self::Mixed {
+                laptop,
+                ref monitors,
+            } => match setup {
+                Setup::LaptopLeft => {
+                    let max_output_height = self.max_output_height();
 
                     let workspace_settings =
-                        Self::distribute_workspaces(workspaces, laptop, externals)?;
+                        Self::distribute_workspaces(workspaces, laptop, monitors)?;
 
-                    let mut output_settings: Vec<OutputSetting<'_>> =
-                        externals.into_iter().map(|ext| ext.on()).collect();
+                    // keeping track of horizontal position, from left to right
+                    let mut pos_x_cursor = output::PosX(0);
 
-                    output_settings.extend(
-                        self.disconnected_externals
-                            .iter()
-                            .map(|output| output.off()),
-                    );
+                    let output_settings = iter::once(&laptop)
+                        .chain(monitors)
+                        .map(|output| {
+                            let out = output.set(OutputActiveState::On {
+                                position: {
+                                    output::Position {
+                                        x: pos_x_cursor,
+                                        y: max_output_height
+                                            .sub(output.mode.height)
+                                            .end()
+                                            .expect("always positive, as max_height >= height"),
+                                    }
+                                },
+                            });
 
-                    match setup {
-                        Setup::LaptopLeft => output_settings.insert(0, laptop.on()),
-                        Setup::LaptopRight => output_settings.push(laptop.on()),
-                        Setup::LaptopOnly | Setup::ExternalOnly | Setup::Projector => {
-                            unreachable!("checked for enum values above")
-                        }
-                    }
-
-                    Ok(Plan {
-                        output_settings,
-                        workspace_settings,
-                    })
-                }
-            },
-            Setup::Projector => match self.laptop {
-                None => Err(Error::Plan("no laptop screen found".into())),
-                Some(laptop) => {
-                    let Some(ref externals) = self.externals else {
-                        return Err(Error::Plan("no external screens found".into()));
-                    };
-
-                    if externals.len() != 1 {
-                        return Err(Error::Plan(
-                            "can only project with single external screen".into(),
-                        ));
-                    }
-
-                    let external = externals.first();
-
-                    let workspace_settings = Self::projector(workspaces, laptop, external)?;
-
-                    let mut output_settings = vec![laptop.on()];
-                    output_settings.extend(externals.iter().map(|ext| ext.on()));
-                    output_settings.extend(
-                        self.disconnected_externals
-                            .iter()
-                            .map(|output| output.off()),
-                    );
+                            // advance cursor to the right
+                            pos_x_cursor.add(output::PosX(output.mode.width.into_inner()));
+                            out
+                        })
+                        .collect();
 
                     Ok(Plan {
                         output_settings,
                         workspace_settings,
+                        setup,
                     })
                 }
-            },
-            Setup::LaptopOnly => match self.laptop {
-                None => Err(Error::Plan("no laptop screen found".into())),
-                Some(laptop) => Ok(Self::all_on_laptop(
+                Setup::LaptopRight => {
+                    let max_output_height = self.max_output_height();
+
+                    // keeping track of horizontal position, from left to right
+                    let mut pos_x_cursor = output::PosX(0);
+
+                    let workspace_settings =
+                        Self::distribute_workspaces(workspaces, laptop, monitors)?;
+
+                    let output_settings = (monitors)
+                        .into_iter()
+                        .chain(iter::once(&laptop))
+                        .map(|output| {
+                            let out = output.set(OutputActiveState::On {
+                                position: {
+                                    output::Position {
+                                        x: pos_x_cursor,
+                                        y: max_output_height
+                                            .sub(output.mode.height)
+                                            .end()
+                                            .expect("always positive, as max_height >= height"),
+                                    }
+                                },
+                            });
+
+                            // advance cursor to the right
+                            pos_x_cursor.add(output::PosX(output.mode.width.into_inner()));
+                            out
+                        })
+                        .collect();
+
+                    Ok(Plan {
+                        output_settings,
+                        workspace_settings,
+                        setup,
+                    })
+                }
+                Setup::LaptopOnly => Ok(Self::all_on_laptop(
                     workspaces,
                     laptop,
-                    self.externals.as_ref(),
-                    &self.disconnected_externals,
+                    Some(monitors),
+                    setup,
                 )),
-            },
-            Setup::ExternalOnly => match self.externals {
-                None => Err(Error::Plan("no external screens found".into())),
-                Some(ref externals) => Ok(Self::all_on_external(
+                Setup::MonitorOnly => Self::all_on_monitor(
                     workspaces,
-                    self.laptop,
-                    externals,
-                    &self.disconnected_externals,
-                    external_ordering,
-                )?),
+                    Some(laptop),
+                    monitors,
+                    self.max_output_height(),
+                    setup,
+                ),
+                Setup::Projector => match monitors.len() {
+                    1 => Self::projector(workspaces, laptop, monitors.first(), setup),
+                    count => Err(Error::Plan(
+                        format!("can only project with single monitor screen, {count} found")
+                            .into(),
+                    )),
+                },
             },
         }
     }

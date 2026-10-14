@@ -1,55 +1,68 @@
-use std::{path::PathBuf, process, time::Duration};
+use std::{process, time::Duration};
 
 use tracing::Level;
 
-use i3::{Conn as _, EventType};
+use sway::{Conn as _, EventType};
 
 mod cli;
-mod config;
 mod error;
-mod nonempty;
 mod ordering;
 mod output;
 mod plan;
 mod workspace;
 mod workstation;
 
+use crate::workstation::UnorderedWorkstation;
+
 use self::{
     error::Error,
-    ordering::ExternalOrdering,
+    ordering::MonitorOrdering,
     output::{
-        ActiveState as OutputActiveState, Class as OutputClass,
-        ConnectionState as OutputConnectionState, Name as OutputName, Output,
-        Setting as OutputSetting, State as OutputState,
+        ActiveState as OutputActiveState, Class as OutputClass, Name as OutputName, Output,
+        Setting as OutputSetting,
     },
     plan::Plan,
+    workspace::Setting as WorkspaceSetting,
     workstation::Workstation,
 };
 
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, derive_more::Display)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
 enum Setup {
     LaptopLeft,
     LaptopRight,
     LaptopOnly,
-    ExternalOnly,
+    MonitorOnly,
     Projector,
 }
 
 #[expect(clippy::print_stdout, reason = "high level function")]
 async fn manage_screens(
-    connection: &mut i3::Connection,
-    config: Option<&config::Config>,
+    connection: &mut sway::Connection,
     debug: bool,
     dry_run: bool,
     diagram: bool,
     approach: cli::Approach,
-    custom_external_ordering: Option<&str>,
+    custom_monitor_ordering: Option<&str>,
 ) -> Result<(), Error> {
+    connection.command(sway::Command::Nop).await?;
+
     let outputs = Output::findall(connection).await?;
-    let workstation: Workstation<'_> = (&*outputs).try_into()?;
+
+    let monitor_count = outputs
+        .iter()
+        .filter(|output| output.class == output::Class::Monitor)
+        .count();
+
+    let monitor_ordering = match custom_monitor_ordering {
+        Some(order) => MonitorOrdering::parse_from_str(order, monitor_count)?,
+        None => MonitorOrdering::Default,
+    };
+
+    let workstation = UnorderedWorkstation::from_outputs(&outputs)?.order(&monitor_ordering);
 
     let workspaces = connection.workspaces().await?;
     let workspaces =
@@ -58,72 +71,56 @@ async fn manage_screens(
     if debug {
         println!("=== workstation setup:");
 
-        println!("=== laptop output:");
-        match workstation.laptop {
-            Some(output) => {
-                println!(
-                    "{name} ({state})",
-                    name = output.name,
-                    state = output.connection_state
-                );
+        match workstation {
+            Workstation::LaptopOnly { laptop } => {
+                println!("  found only a laptop {name}", name = laptop.name);
             }
-            None => println!("none"),
-        }
-
-        println!("=== external outputs:");
-        match workstation.externals {
-            Some(ref externals) => {
-                for output in externals {
-                    println!(
-                        "{name} ({state})",
-                        name = output.name,
-                        state = output.connection_state
-                    );
+            Workstation::MonitorOnly { ref monitors } => {
+                println!("  found only monitor outputs:");
+                for monitor in monitors {
+                    println!("  - {monitor}");
                 }
             }
-            None => println!("none"),
+            Workstation::Mixed {
+                laptop,
+                ref monitors,
+            } => {
+                println!(
+                    "  found laptop {name} and monitor outputs {monitors}",
+                    name = laptop.name,
+                    monitors = monitors
+                        .iter()
+                        .map(|output| output.name.as_str())
+                        .collect::<Vec<&str>>()
+                        .join(", ")
+                );
+            }
         }
-        println!("=== i3 workspaces:");
+
+        println!("=== sway workspaces:");
         for workspace in &workspaces.0 {
             println!("  - {workspace}");
         }
-        println!();
     }
 
-    connection.command(i3::Command::Nop).await?;
-
-    let external_ordering = match custom_external_ordering {
-        Some(order) => ExternalOrdering::parse_from_str(
-            order,
-            match workstation.externals {
-                Some(ref externals) => externals.len(),
-                None => 0,
-            },
-        )?,
-        None => ExternalOrdering::Default,
-    };
-
     let plan = match approach {
-        cli::Approach::LaptopLeft => {
-            workstation.plan(Setup::LaptopLeft, &workspaces, &external_ordering)?
+        cli::Approach::LaptopLeft => workstation.plan(Setup::LaptopLeft, &workspaces)?,
+        cli::Approach::LaptopRight => workstation.plan(Setup::LaptopRight, &workspaces)?,
+        cli::Approach::LaptopOnly => workstation.plan(Setup::LaptopOnly, &workspaces)?,
+        cli::Approach::MonitorOnly => workstation.plan(Setup::MonitorOnly, &workspaces)?,
+        cli::Approach::Projector => workstation.plan(Setup::Projector, &workspaces)?,
+        cli::Approach::Best => {
+            let plan = workstation
+                .plan(Setup::LaptopLeft, &workspaces)
+                .or_else(|_| workstation.plan(Setup::LaptopOnly, &workspaces))
+                .or_else(|_| workstation.plan(Setup::MonitorOnly, &workspaces))
+                .map_err(|_err| Error::Plan("no plan fit with \"best\" strategy".into()))?;
+
+            if debug {
+                println!("best heuristic: selected the {} setup", plan.setup);
+            }
+            plan
         }
-        cli::Approach::LaptopRight => {
-            workstation.plan(Setup::LaptopRight, &workspaces, &external_ordering)?
-        }
-        cli::Approach::LaptopOnly => {
-            workstation.plan(Setup::LaptopOnly, &workspaces, &external_ordering)?
-        }
-        cli::Approach::ExternalOnly => {
-            workstation.plan(Setup::ExternalOnly, &workspaces, &external_ordering)?
-        }
-        cli::Approach::Projector => {
-            workstation.plan(Setup::Projector, &workspaces, &external_ordering)?
-        }
-        cli::Approach::Best => workstation
-            .plan(Setup::LaptopLeft, &workspaces, &external_ordering)
-            .or_else(|_| workstation.plan(Setup::LaptopOnly, &workspaces, &external_ordering))
-            .or_else(|_| workstation.plan(Setup::ExternalOnly, &workspaces, &external_ordering))
-            .map_err(|_err| Error::Plan("no plan fit with \"best\" strategy".into()))?,
     };
 
     if debug {
@@ -140,44 +137,21 @@ async fn manage_screens(
 
     let commands = plan.commands();
 
-    if dry_run {
-        println!("dry run mode:");
+    if commands.is_empty() {
+        println!("no changes");
     } else {
-        println!("applying changes:");
-    }
-
-    for command in &commands {
-        println!("- {command}");
+        if dry_run {
+            println!("dry run, would be applying changes:");
+        } else {
+            println!("applying changes:");
+        }
+        for command in &commands {
+            println!("- {command}");
+        }
     }
 
     if !dry_run {
         Plan::apply(connection, commands).await?;
-    }
-
-    if let Some(post_commands) = config.and_then(|c| c.post_commands.as_ref()) {
-        for command in post_commands {
-            println!("executing post command \"{command}\"");
-            let output = process::Command::new("bash")
-                .arg("-c")
-                .arg(command)
-                .output()
-                .map_err(|e| {
-                    Error::Generic(
-                        format!("post command \"{command}\" invocation failed: {e}").into(),
-                    )
-                })?;
-
-            if !output.status.success() {
-                return Err(Error::Generic(
-                    format!(
-                        "post command \"{command}\" failed: {stderr}",
-                        stderr = String::from_utf8(output.stderr)
-                            .unwrap_or_else(|_| "stderr invalid utf8".to_owned())
-                    )
-                    .into(),
-                ));
-            }
-        }
     }
 
     Ok(())
@@ -206,42 +180,36 @@ async fn run() -> Result<(), Error> {
 
     tracing::subscriber::set_global_default(subscriber)?;
 
-    let socket_path = i3::get_socket_path()?;
+    let socket_path = sway::get_socket_path()?;
     tracing::debug!(%socket_path, "socket path found");
 
     match args.subcommand {
         cli::Cmd::Set(set_options) => {
-            let config = config::find(args.config.map(|path| PathBuf::from(path)).as_deref())?;
-
-            let mut connection = i3::connect(&socket_path).await?;
+            let mut connection = sway::connect(&socket_path).await?;
 
             manage_screens(
                 &mut connection,
-                config.as_ref(),
                 args.debug,
                 set_options.dry_run,
                 set_options.diagram,
                 set_options.setup,
-                set_options.custom_external_ordering.as_deref(),
+                set_options.custom_monitor_ordering.as_deref(),
             )
             .await?;
         }
         cli::Cmd::Watch(watch_options) => {
-            let config = config::find(args.config.map(|path| PathBuf::from(path)).as_deref())?;
-
             // two connections, as we do not want to mangle subscriptions with commands
-            let subscribe_connection = i3::connect(&socket_path).await?;
-            let mut command_connection = i3::connect(&socket_path).await?;
+            let subscribe_connection = sway::connect(&socket_path).await?;
+            let mut command_connection = sway::connect(&socket_path).await?;
 
             let mut setter = async || {
                 manage_screens(
                     &mut command_connection,
-                    config.as_ref(),
                     args.debug,
                     watch_options.dry_run,
                     watch_options.diagram,
                     watch_options.setup,
-                    watch_options.custom_external_ordering.as_deref(),
+                    watch_options.custom_monitor_ordering.as_deref(),
                 )
                 .await
             };
@@ -252,7 +220,7 @@ async fn run() -> Result<(), Error> {
 
             let Err(err) = subscription
                 .start_event_listener::<_, Error>(Duration::from_millis(2000), async move |event| {
-                    eprintln!("received event from i3: {event}");
+                    eprintln!("received event from sway: {event}");
                     setter().await?;
 
                     Ok::<(), Error>(())

@@ -1,0 +1,13 @@
+[package]
+name = "nonempty"
+version.workspace = true
+edition.workspace = true
+
+[dev-dependencies]
+tap = { workspace = true, default-features = false }
+
+[features]
+testing = []
+
+[lints]
+workspace = true

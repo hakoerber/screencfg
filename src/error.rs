@@ -1,4 +1,4 @@
-use std::{fmt, io, path::PathBuf, process::ExitCode};
+use std::{fmt, process::ExitCode};
 
 use super::{output, workspace};
 
@@ -47,20 +47,10 @@ pub(crate) enum Error {
     Workstation(Msg),
     #[error("plan failed: {0}")]
     Plan(Msg),
-    #[error("apply failed: {0}")]
-    Apply(Msg),
-    #[error("i3: {0}")]
-    I3(#[from] i3::Error),
-    #[error("xrandr: {0}")]
-    Xrandr(#[from] xrandr::Error),
+    #[error("sway: {0}")]
+    I3(#[from] sway::Error),
     #[error("invalid setup: {0}")]
     InvalidSetup(Msg),
-    #[error("invalid config : {0}")]
-    InvalidConfig(Msg),
-    #[error("could not open config file at {path}: {err}", path = path.display())]
-    ConfigFileOpen { path: PathBuf, err: io::Error },
-    #[error("could not find config file at {path}", path = path.display())]
-    ConfigNotFound { path: PathBuf },
     #[error("output name validation failed: {0}")]
     OutputNameValidation(#[from] output::NameError),
     #[error("workspace name validation failed: {0}")]

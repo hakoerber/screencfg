@@ -17,6 +17,18 @@ where
     }
 }
 
+impl<T> Clone for NonEmptyVec<T>
+where
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            first: self.first.clone(),
+            rest: self.rest.clone(),
+        }
+    }
+}
+
 impl<T> PartialEq for NonEmptyVec<T>
 where
     T: PartialEq,
@@ -29,12 +41,18 @@ where
 impl<T> Eq for NonEmptyVec<T> where T: Eq {}
 
 impl<T> NonEmptyVec<T> {
-    pub fn new(mut from: Vec<T>) -> Self {
-        assert!(!from.is_empty(), "creating nonempty vec from empty vec");
+    pub fn new(mut from: Vec<T>) -> Option<Self> {
+        if from.is_empty() {
+            return None;
+        }
         let first = from.remove(0);
-        Self { first, rest: from }
+        Some(Self { first, rest: from })
     }
 
+    #[expect(
+        clippy::len_without_is_empty,
+        reason = "yeah clippy, but `empty()` does not *really* make sense here ;)"
+    )]
     pub fn len(&self) -> usize {
         self.rest.len().checked_add(1).expect("vec at capacity")
     }
@@ -54,6 +72,33 @@ impl<T> NonEmptyVec<T> {
 
     pub fn iter(&self) -> IntoIterRef<'_, T> {
         self.into_iter()
+    }
+
+    pub fn into_vec(self) -> Vec<T> {
+        self.into_iter().collect()
+    }
+}
+
+impl<T> NonEmptyVec<T>
+where
+    T: Clone,
+{
+    pub fn sort_by_key<F, K>(&mut self, f: F)
+    where
+        F: Fn(&T) -> K,
+        K: Ord,
+    {
+        let mut sorted = {
+            let mut vec = self.clone().into_vec();
+            vec.sort_by_key(f);
+            vec
+        };
+
+        let rest = sorted.split_off(1);
+        let first = sorted.pop().expect("leftover is exactly 1");
+
+        self.first = first;
+        self.rest = rest;
     }
 }
 
@@ -112,5 +157,43 @@ impl<'a, T> IntoIterator for &'a NonEmptyVec<T> {
             first: Some(&self.first),
             rest: self.rest.iter(),
         }
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::default_numeric_fallback,
+    reason = "readability, and the type is irrelevant"
+)]
+mod tests {
+    use tap::Tap as _;
+
+    use super::*;
+
+    #[test]
+    fn test_from_empty() {
+        assert!(NonEmptyVec::<bool>::new(vec![]).is_none());
+    }
+
+    #[test]
+    fn test_sorting() {
+        assert_eq!(
+            NonEmptyVec::new(vec![1, 2, 3, 4])
+                .unwrap()
+                .tap_mut(|vec| vec.sort_by_key(|i| *i)),
+            NonEmptyVec::new(vec![1, 2, 3, 4]).unwrap()
+        );
+        assert_eq!(
+            NonEmptyVec::new(vec![1, 2, 3, 4])
+                .unwrap()
+                .tap_mut(|vec| vec.sort_by_key(|i| -*i)),
+            NonEmptyVec::new(vec![4, 3, 2, 1]).unwrap()
+        );
+        assert_eq!(
+            NonEmptyVec::new(vec![615, 748, 372, 621, 920])
+                .unwrap()
+                .tap_mut(|vec| vec.sort_by_key(|i| *i)),
+            NonEmptyVec::new(vec![372, 615, 621, 748, 920]).unwrap()
+        );
     }
 }

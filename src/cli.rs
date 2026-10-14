@@ -5,7 +5,7 @@ pub(crate) enum Approach {
     LaptopLeft,
     LaptopRight,
     LaptopOnly,
-    ExternalOnly,
+    MonitorOnly,
     Projector,
     Best,
 }
@@ -45,7 +45,7 @@ pub(crate) struct SetOptions {
     pub(crate) setup: Approach,
 
     #[arg(long)]
-    pub(crate) custom_external_ordering: Option<String>,
+    pub(crate) custom_monitor_ordering: Option<String>,
 
     #[arg(long)]
     pub(crate) dry_run: bool,
@@ -60,7 +60,7 @@ pub(crate) struct WatchOptions {
     pub(crate) setup: Approach,
 
     #[arg(long)]
-    pub(crate) custom_external_ordering: Option<String>,
+    pub(crate) custom_monitor_ordering: Option<String>,
 
     #[arg(long)]
     pub(crate) dry_run: bool,

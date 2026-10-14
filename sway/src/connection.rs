@@ -62,6 +62,7 @@ impl Conn for Connection {
     }
 
     async fn outputs(&mut self) -> Result<Outputs, Error> {
+        tracing::debug!("getting outputs");
         Message::Outputs.send(self).await?;
         let response = Response::read(self).await?;
 

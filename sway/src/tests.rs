@@ -6,13 +6,14 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    Command, Conn, Error, EventPayload, EventType, Output, OutputName, Outputs, Subscribe,
-    TaskResult, Version, Workspace, WorkspaceName, WorkspaceNumber, Workspaces,
+    Command, Conn, Error, EventPayload, EventType, Height, Output, OutputMode, OutputName, Outputs,
+    PosX, PosY, Position, RefreshRate, Subscribe, TaskResult, Version, Width, Workspace,
+    WorkspaceName, WorkspaceNumber, Workspaces,
 };
 
 pub enum MockSetting {
     LaptopOnly,
-    ExternalOnly(usize),
+    MonitorOnly(usize),
     Mixed,
 }
 
@@ -52,25 +53,57 @@ impl Conn for MockConnection {
         match self.setting {
             MockSetting::LaptopOnly => Ok(Outputs(vec![Output {
                 name: OutputName::try_new("eDP-1".to_owned()).unwrap(),
+                mode: OutputMode {
+                    width: Width::new(1920),
+                    height: Height::new(1080),
+                    refresh_rate: RefreshRate::Ms(144),
+                },
                 active: true,
-                primary: true,
+                position: Position {
+                    x: PosX(0),
+                    y: PosY(0),
+                },
             }])),
-            MockSetting::ExternalOnly(num) => match num {
+            MockSetting::MonitorOnly(num) => match num {
                 1 => Ok(Outputs(vec![Output {
                     name: OutputName::try_new("DP-1".to_owned()).unwrap(),
+                    mode: OutputMode {
+                        width: Width::new(1920),
+                        height: Height::new(1080),
+                        refresh_rate: RefreshRate::Ms(144),
+                    },
                     active: true,
-                    primary: false,
+                    position: Position {
+                        x: PosX(0),
+                        y: PosY(0),
+                    },
                 }])),
                 2 => Ok(Outputs(vec![
                     Output {
                         name: OutputName::try_new("DP-1".to_owned()).unwrap(),
+                        mode: OutputMode {
+                            width: Width::new(1920),
+                            height: Height::new(1080),
+                            refresh_rate: RefreshRate::Ms(144),
+                        },
                         active: true,
-                        primary: false,
+                        position: Position {
+                            x: PosX(0),
+                            y: PosY(0),
+                        },
                     },
                     Output {
                         name: OutputName::try_new("DP-2".to_owned()).unwrap(),
-                        active: false,
-                        primary: false,
+                        mode: OutputMode {
+                            width: Width::new(1024),
+                            height: Height::new(800),
+                            refresh_rate: RefreshRate::Ms(144),
+                        },
+                        active: true,
+                        position: Position {
+                            x: PosX(0),
+                            y: PosY(0),
+                        },
                     },
                 ])),
                 #[expect(clippy::panic, reason = "just a mock")]
@@ -79,18 +112,42 @@ impl Conn for MockConnection {
             MockSetting::Mixed => Ok(Outputs(vec![
                 Output {
                     name: OutputName::try_new("eDP-1".to_owned()).unwrap(),
+                    mode: OutputMode {
+                        width: Width::new(1920),
+                        height: Height::new(1080),
+                        refresh_rate: RefreshRate::Ms(144),
+                    },
                     active: true,
-                    primary: true,
+                    position: Position {
+                        x: PosX(0),
+                        y: PosY(0),
+                    },
                 },
                 Output {
                     name: OutputName::try_new("HDMI-1".to_owned()).unwrap(),
+                    mode: OutputMode {
+                        width: Width::new(2560),
+                        height: Height::new(1440),
+                        refresh_rate: RefreshRate::Ms(144),
+                    },
                     active: true,
-                    primary: false,
+                    position: Position {
+                        x: PosX(0),
+                        y: PosY(0),
+                    },
                 },
                 Output {
                     name: OutputName::try_new("DP-1".to_owned()).unwrap(),
+                    mode: OutputMode {
+                        width: Width::new(1024),
+                        height: Height::new(800),
+                        refresh_rate: RefreshRate::Ms(60),
+                    },
                     active: true,
-                    primary: false,
+                    position: Position {
+                        x: PosX(0),
+                        y: PosY(0),
+                    },
                 },
             ])),
         }
@@ -106,22 +163,22 @@ impl Conn for MockConnection {
                     output: OutputName::try_new("eDP-1".to_owned()).unwrap(),
                 },
                 Workspace {
-                    num: WorkspaceNumber::new(1),
-                    name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                    num: WorkspaceNumber::new(2),
+                    name: WorkspaceName::try_new("num2".to_owned()).unwrap(),
                     output: OutputName::try_new("eDP-1".to_owned()).unwrap(),
                 },
                 Workspace {
-                    num: WorkspaceNumber::new(1),
-                    name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                    num: WorkspaceNumber::new(3),
+                    name: WorkspaceName::try_new("num3".to_owned()).unwrap(),
                     output: OutputName::try_new("eDP-1".to_owned()).unwrap(),
                 },
                 Workspace {
-                    num: WorkspaceNumber::new(1),
-                    name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                    num: WorkspaceNumber::new(4),
+                    name: WorkspaceName::try_new("num4".to_owned()).unwrap(),
                     output: OutputName::try_new("eDP-1".to_owned()).unwrap(),
                 },
             ])),
-            MockSetting::ExternalOnly(num) => match num {
+            MockSetting::MonitorOnly(num) => match num {
                 1 => Ok(Workspaces(vec![
                     Workspace {
                         num: WorkspaceNumber::new(1),
@@ -129,18 +186,18 @@ impl Conn for MockConnection {
                         output: OutputName::try_new("DP-1".to_owned()).unwrap(),
                     },
                     Workspace {
-                        num: WorkspaceNumber::new(1),
-                        name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                        num: WorkspaceNumber::new(2),
+                        name: WorkspaceName::try_new("num2".to_owned()).unwrap(),
                         output: OutputName::try_new("DP-1".to_owned()).unwrap(),
                     },
                     Workspace {
-                        num: WorkspaceNumber::new(1),
-                        name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                        num: WorkspaceNumber::new(3),
+                        name: WorkspaceName::try_new("num3".to_owned()).unwrap(),
                         output: OutputName::try_new("DP-1".to_owned()).unwrap(),
                     },
                     Workspace {
-                        num: WorkspaceNumber::new(1),
-                        name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                        num: WorkspaceNumber::new(4),
+                        name: WorkspaceName::try_new("num4".to_owned()).unwrap(),
                         output: OutputName::try_new("DP-1".to_owned()).unwrap(),
                     },
                 ])),
@@ -151,18 +208,18 @@ impl Conn for MockConnection {
                         output: OutputName::try_new("DP-1".to_owned()).unwrap(),
                     },
                     Workspace {
-                        num: WorkspaceNumber::new(1),
-                        name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                        num: WorkspaceNumber::new(2),
+                        name: WorkspaceName::try_new("num2".to_owned()).unwrap(),
                         output: OutputName::try_new("DP-1".to_owned()).unwrap(),
                     },
                     Workspace {
-                        num: WorkspaceNumber::new(1),
-                        name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                        num: WorkspaceNumber::new(3),
+                        name: WorkspaceName::try_new("num3".to_owned()).unwrap(),
                         output: OutputName::try_new("DP-2".to_owned()).unwrap(),
                     },
                     Workspace {
-                        num: WorkspaceNumber::new(1),
-                        name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                        num: WorkspaceNumber::new(10),
+                        name: WorkspaceName::try_new("num10".to_owned()).unwrap(),
                         output: OutputName::try_new("DP-2".to_owned()).unwrap(),
                     },
                 ])),
@@ -176,18 +233,18 @@ impl Conn for MockConnection {
                     output: OutputName::try_new("eDP-1".to_owned()).unwrap(),
                 },
                 Workspace {
-                    num: WorkspaceNumber::new(1),
-                    name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                    num: WorkspaceNumber::new(2),
+                    name: WorkspaceName::try_new("num2".to_owned()).unwrap(),
                     output: OutputName::try_new("eDP-1".to_owned()).unwrap(),
                 },
                 Workspace {
-                    num: WorkspaceNumber::new(1),
-                    name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                    num: WorkspaceNumber::new(3),
+                    name: WorkspaceName::try_new("num3".to_owned()).unwrap(),
                     output: OutputName::try_new("DP-1".to_owned()).unwrap(),
                 },
                 Workspace {
-                    num: WorkspaceNumber::new(1),
-                    name: WorkspaceName::try_new("num1".to_owned()).unwrap(),
+                    num: WorkspaceNumber::new(10),
+                    name: WorkspaceName::try_new("num10".to_owned()).unwrap(),
                     output: OutputName::try_new("HDMI-1".to_owned()).unwrap(),
                 },
             ])),

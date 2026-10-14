@@ -9,25 +9,25 @@ pub(crate) struct Workspaces<'out>(pub(crate) Vec<Workspace<'out>>);
 
 impl<'out> Workspaces<'out> {
     pub(crate) fn convert(
-        workspaces: i3::Workspaces,
+        workspaces: sway::Workspaces,
         outputs: &[&'out Output],
     ) -> Result<Self, Error> {
         Ok(Self(
             workspaces
                 .into_iter()
                 .map(|from| {
-                    let output_name_from_i3_workspaces: OutputName = from.output.try_into()?;
+                    let output_name_from_sway_workspaces: OutputName = from.output.try_into()?;
                     Ok(Workspace {
                         num: from.num.into(),
                         name: from.name.try_into()?,
                         output: outputs
                             .iter()
-                            .find(|output| output_name_from_i3_workspaces == output.name)
+                            .find(|output| output_name_from_sway_workspaces == output.name)
                             .ok_or_else(|| {
                                 Error::Generic(
                                     format!(
-                                        "output of workspace {} ({}) not found in i3 outputs",
-                                        from.num, output_name_from_i3_workspaces
+                                        "output of workspace {} ({}) not found in sway outputs",
+                                        from.num, output_name_from_sway_workspaces
                                     )
                                     .into(),
                                 )
@@ -42,10 +42,10 @@ impl<'out> Workspaces<'out> {
 #[nutype(derive(Debug, PartialEq, Eq, Display), validate(not_empty))]
 pub(crate) struct Name(String);
 
-impl TryFrom<i3::WorkspaceName> for Name {
+impl TryFrom<sway::WorkspaceName> for Name {
     type Error = NameError;
 
-    fn try_from(value: i3::WorkspaceName) -> Result<Self, Self::Error> {
+    fn try_from(value: sway::WorkspaceName) -> Result<Self, Self::Error> {
         Self::try_new(value.into_inner())
     }
 }
@@ -53,19 +53,20 @@ impl TryFrom<i3::WorkspaceName> for Name {
 #[nutype(derive(Debug, PartialEq, Eq, Copy, Clone, Display))]
 pub(crate) struct Number(usize);
 
-impl From<Number> for i3::WorkspaceNumber {
+impl From<Number> for sway::WorkspaceNumber {
     fn from(value: Number) -> Self {
         Self::new(value.into_inner())
     }
 }
 
-impl From<i3::WorkspaceNumber> for Number {
-    fn from(value: i3::WorkspaceNumber) -> Self {
+impl From<sway::WorkspaceNumber> for Number {
+    fn from(value: sway::WorkspaceNumber) -> Self {
         Self::new(value.into_inner())
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
 pub(crate) struct Workspace<'out> {
     pub(crate) num: Number,
     pub(crate) name: Name,
@@ -78,14 +79,27 @@ impl fmt::Display for Workspace<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct WorkspaceSetting<'ws, 'out> {
-    pub(crate) workspace: &'ws Workspace<'out>,
-    pub(crate) output: &'out Output,
+#[derive(Debug)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+pub(crate) enum Setting<'ws, 'out> {
+    Unchanged {
+        workspace: &'ws Workspace<'out>,
+    },
+    Change {
+        workspace: &'ws Workspace<'out>,
+        output: &'out Output,
+    },
 }
 
-impl fmt::Display for WorkspaceSetting<'_, '_> {
+impl fmt::Display for Setting<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "workspace {} to output {}", self.workspace, self.output)
+        match *self {
+            Setting::Unchanged { workspace } => {
+                write!(f, "workspace {workspace} unchanged")
+            }
+            Setting::Change { workspace, output } => {
+                write!(f, "workspace {workspace} to {output}")
+            }
+        }
     }
 }

@@ -22,13 +22,16 @@ mod subscribe;
 
 pub use connection::{Conn, Connection};
 pub use error::Error;
-pub use message::Command;
+pub use message::{Command, OutputState, PosX, PosY, Position};
 pub(crate) use message::{EventPayload, Message, Response, ResponseType};
 pub(crate) use subscribe::Subscribe;
 pub use subscribe::{Subscription, TaskResult};
 use tokio::{io, net};
 
-#[nutype(derive(Debug, Clone, Copy, Display))]
+#[nutype(
+    derive(Debug, Clone, Copy, Display),
+    cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))
+)]
 pub struct WorkspaceNumber(usize);
 
 #[nutype(derive(Debug, PartialEq, Eq), validate(not_empty))]
@@ -37,8 +40,30 @@ pub struct WorkspaceName(String);
 #[nutype(derive(Debug, Display), validate(not_empty))]
 pub struct OutputName(String);
 
-#[nutype(derive(Display))]
+#[nutype(
+    derive(Debug, Display),
+    cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))
+)]
 pub struct OutputNameRef<'a>(&'a String);
+
+#[nutype(derive(Debug))]
+pub struct Width(usize);
+
+#[nutype(derive(Debug))]
+pub struct Height(usize);
+
+#[derive(Debug)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+pub enum RefreshRate {
+    Ms(usize),
+}
+
+#[derive(Debug)]
+pub struct OutputMode {
+    pub width: Width,
+    pub height: Height,
+    pub refresh_rate: RefreshRate,
+}
 
 pub struct SocketPath(SocketAddr);
 
@@ -56,7 +81,8 @@ impl fmt::Display for SocketPath {
 }
 
 pub fn get_socket_path() -> Result<SocketPath, Error> {
-    let cmd = process::Command::new("i3")
+    tracing::debug!("calling sway --get-socketpath");
+    let cmd = process::Command::new("sway")
         .arg("--get-socketpath")
         .output()?;
 
@@ -86,8 +112,9 @@ pub async fn connect(socket_path: &SocketPath) -> Result<Connection, Error> {
 #[derive(Debug)]
 pub struct Output {
     pub name: OutputName,
+    pub mode: OutputMode,
+    pub position: Position,
     pub active: bool,
-    pub primary: bool,
 }
 
 impl fmt::Display for Output {
@@ -95,9 +122,6 @@ impl fmt::Display for Output {
         write!(f, "{}", self.name)?;
         if self.active {
             write!(f, " [active]")?;
-        }
-        if self.primary {
-            write!(f, " [primary]")?;
         }
         Ok(())
     }
@@ -165,7 +189,7 @@ impl Index<usize> for Outputs {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub enum EventType {
     #[serde(rename = "output")]
     Output,

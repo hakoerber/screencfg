@@ -3,12 +3,47 @@ use std::{borrow::Cow, fmt};
 use serde::Deserialize;
 
 use super::{
-    Connection, Error, EventType, Output, OutputName, OutputNameError, OutputNameRef, Outputs,
-    Version, Workspace, WorkspaceName, WorkspaceNumber, Workspaces,
+    Connection, Error, EventType, Height, Output, OutputMode, OutputName, OutputNameError,
+    OutputNameRef, Outputs, RefreshRate, Version, Width, Workspace, WorkspaceName, WorkspaceNumber,
+    Workspaces,
 };
 
+// Sic, sway resuses the i3 magic string for compatibility
+const MAGIC_STRING: &str = "i3-ipc";
+
+#[derive(Debug, Clone, Copy, derive_more::Display)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+pub struct PosX(pub usize);
+
+#[derive(Debug, Clone, Copy, derive_more::Display)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+pub struct PosY(pub usize);
+
+#[derive(Debug)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+pub struct Position {
+    pub x: PosX,
+    pub y: PosY,
+}
+
+#[derive(Debug)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+pub enum OutputState {
+    Enabled {
+        position: Position,
+        refresh_rate: RefreshRate,
+    },
+    Disabled,
+}
+
+#[derive(Debug)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
 pub enum Command<'out> {
     Nop,
+    Output {
+        output_name: OutputNameRef<'out>,
+        state: OutputState,
+    },
     MoveWorkspace {
         number: WorkspaceNumber,
         output_name: OutputNameRef<'out>,
@@ -16,6 +51,7 @@ pub enum Command<'out> {
     Reload,
 }
 
+#[derive(Debug)]
 pub(crate) enum Message<'input> {
     Command(Command<'input>),
     Subscribe(&'input [EventType]),
@@ -51,7 +87,7 @@ impl Message<'_> {
         let mut message: Vec<u8> = vec![];
         let command_number: u32 = self.into();
 
-        message.extend_from_slice(b"i3-ipc");
+        message.extend_from_slice(MAGIC_STRING.as_bytes());
         message.extend_from_slice(
             &u32::try_from(payload.as_ref().map_or(0, |l| l.len()))
                 .map_err(|_err| Error::Protocol("payload length bigger than 4 bytes".into()))?
@@ -65,8 +101,11 @@ impl Message<'_> {
     }
 
     pub(crate) async fn send(self, socket: &mut Connection) -> Result<(), Error> {
+        tracing::debug!(message = ?self, "sending sway message");
         let message = self.bytes()?;
+        tracing::debug!("sending bytes {message:?}");
         socket.write_all(&message).await?;
+        tracing::debug!("bytes sent");
         Ok(())
     }
 }
@@ -82,15 +121,43 @@ impl From<&Command<'_>> for Cow<'static, str> {
                 "[workspace=\"{id}\"] move workspace to output {output_name}"
             )),
             Command::Reload => Cow::from("reload"),
+            Command::Output {
+                ref output_name,
+                ref state,
+            } => match *state {
+                OutputState::Enabled {
+                    ref position,
+                    refresh_rate: ref _refresh_rate,
+                } => Cow::from(format!(
+                    "output \"{output_name}\" position {x} {y}",
+                    x = position.x,
+                    y = position.y,
+                )),
+                OutputState::Disabled => Cow::from(format!("output \"{output_name}\" disable")),
+            },
         }
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct OutputRectPayload {
+    x: usize,
+    y: usize,
 }
 
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct OutputPayload {
     name: String,
     active: bool,
-    primary: bool,
+    current_mode: OutputModePayload,
+    rect: OutputRectPayload,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct OutputModePayload {
+    width: usize,
+    height: usize,
+    refresh: usize,
 }
 
 impl TryFrom<OutputPayload> for Output {
@@ -100,7 +167,15 @@ impl TryFrom<OutputPayload> for Output {
         Ok(Self {
             name: OutputName::try_new(value.name)?,
             active: value.active,
-            primary: value.primary,
+            mode: OutputMode {
+                width: Width::new(value.current_mode.width),
+                height: Height::new(value.current_mode.height),
+                refresh_rate: RefreshRate::Ms(value.current_mode.refresh),
+            },
+            position: Position {
+                x: PosX(value.rect.x),
+                y: PosY(value.rect.y),
+            },
         })
     }
 }
@@ -120,7 +195,7 @@ impl TryFrom<Vec<OutputPayload>> for Outputs {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[expect(dead_code, reason = "external data defintion")]
+#[expect(dead_code, reason = "monitor data defintion")]
 pub(crate) struct WorkspacePayload {
     id: usize,
     num: usize,
@@ -154,7 +229,7 @@ impl TryFrom<Vec<WorkspacePayload>> for Workspaces {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[expect(dead_code, reason = "external data defintion")]
+#[expect(dead_code, reason = "monitor data defintion")]
 pub(crate) struct VersionPayload {
     human_readable: String,
     loaded_config_file_name: String,
@@ -227,10 +302,11 @@ pub(crate) enum Response {
 
 impl Response {
     pub(crate) async fn read(stream: &mut Connection) -> Result<Self, Error> {
+        tracing::debug!("reading response");
         let mut response =
             vec![
                 0;
-                "i3-ipc"
+                MAGIC_STRING
                     .chars()
                     .count()
                     .checked_add(
@@ -244,10 +320,12 @@ impl Response {
 
         let _bytes_count = stream.read_exact(&mut response).await?;
 
-        if &response
+        tracing::debug!("received response {response:?}");
+
+        if response
             .get(0..6)
             .ok_or_else(|| Error::Protocol("response too short for even the magic string".into()))?
-            != b"i3-ipc"
+            != MAGIC_STRING.as_bytes()
         {
             return Err(Error::Protocol("magic string not found".into()));
         }

@@ -65,10 +65,10 @@ impl Subscription {
     /// This takes ownership of self because event handling
     /// should have a separate connection, as it fucks with request ordering
     ///
-    /// <https://i3wm.org/docs/ipc.html#_events>
+    /// <https://swaywm.org/docs/ipc.html#_events>
     ///
     /// > As soon as you subscribe to an event, it is not guaranteed any longer
-    /// > that the requests to i3 are processed in order. This means, the
+    /// > that the requests to sway are processed in order. This means, the
     /// > following situation can happen: You send a GET_WORKSPACES request
     /// > but you receive a "workspace" event before receiving the reply to
     /// > GET_WORKSPACES. If your program does not want to cope which such kinds

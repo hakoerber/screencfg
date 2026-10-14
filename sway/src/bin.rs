@@ -3,22 +3,22 @@
 
 use std::{error::Error, time::Duration};
 
-use i3::{self, Conn as _, EventType};
+use sway::{self, Conn as _, EventType};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let socket_path = i3::get_socket_path()?;
+    let socket_path = sway::get_socket_path()?;
 
-    let i3_connection = i3::connect(&socket_path).await?;
+    let sway_connection = sway::connect(&socket_path).await?;
 
-    let subscription = i3_connection
+    let subscription = sway_connection
         .subscribe(&[EventType::Output, EventType::Workspace])
         .await?;
 
     let Err(err) = subscription
         .start_event_listener(
             Duration::from_millis(1000),
-            async |event| -> Result<(), i3::Error> {
+            async |event| -> Result<(), sway::Error> {
                 println!("{event}");
                 Ok(())
             },
