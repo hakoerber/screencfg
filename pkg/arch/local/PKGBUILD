@@ -11,6 +11,11 @@ makedepends=('cargo' 'git')
 source=()
 sha256sums=()
 
+pkgver() {
+  cd "../../../.."
+  git describe --long --tags --abbrev=7 | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
 prepare() {
   cd "../../../.."
   pwd
