@@ -327,6 +327,7 @@ pub(crate) enum Setting<'out> {
         state: ActiveState,
     },
 }
+
 impl Setting<'_> {
     pub(crate) fn output(&self) -> &Output {
         match *self {

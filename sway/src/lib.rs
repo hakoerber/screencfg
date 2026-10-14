@@ -150,6 +150,7 @@ impl Deref for Workspaces {
         &self.0
     }
 }
+
 impl DerefMut for Workspaces {
     fn deref_mut(&mut self) -> &mut [Workspace] {
         &mut self.0
@@ -175,6 +176,7 @@ impl Deref for Outputs {
         &self.0
     }
 }
+
 impl DerefMut for Outputs {
     fn deref_mut(&mut self) -> &mut [Output] {
         &mut self.0
