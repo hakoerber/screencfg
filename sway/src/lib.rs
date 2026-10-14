@@ -34,7 +34,7 @@ use tokio::{io, net};
 )]
 pub struct WorkspaceNumber(usize);
 
-#[nutype(derive(Debug, PartialEq, Eq), validate(not_empty))]
+#[nutype(derive(Display, Debug, PartialEq, Eq), validate(not_empty))]
 pub struct WorkspaceName(String);
 
 #[nutype(derive(Debug, Display), validate(not_empty))]
@@ -84,7 +84,8 @@ pub fn get_socket_path() -> Result<SocketPath, Error> {
     tracing::debug!("calling sway --get-socketpath");
     let cmd = process::Command::new("sway")
         .arg("--get-socketpath")
-        .output()?;
+        .output()
+        .map_err(|err| Error::GetSocketpath(err))?;
 
     let bytes = cmd
         .stdout
@@ -96,13 +97,16 @@ pub fn get_socket_path() -> Result<SocketPath, Error> {
 
     let path = PathBuf::from(string);
 
-    let socket_addr = StdSocketAddr::from_pathname(path)?;
+    let socket_addr =
+        StdSocketAddr::from_pathname(path).map_err(|err| Error::InvalidSocketpath(err))?;
 
     Ok(SocketPath(socket_addr.into()))
 }
 
 pub async fn connect(socket_path: &SocketPath) -> Result<Connection, Error> {
-    let stream = net::UnixStream::connect_addr(&socket_path.0).await?;
+    let stream = net::UnixStream::connect_addr(&socket_path.0)
+        .await
+        .map_err(|err| Error::ConnectError(err))?;
 
     let buffer = io::BufReader::new(stream);
 

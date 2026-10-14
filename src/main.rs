@@ -114,7 +114,7 @@ async fn manage_screens(
                 .plan(Setup::LaptopLeft, &workspaces)
                 .or_else(|_| workstation.plan(Setup::LaptopOnly, &workspaces))
                 .or_else(|_| workstation.plan(Setup::MonitorOnly, &workspaces))
-                .map_err(|_err| Error::Plan("no plan fit with \"best\" strategy".into()))?;
+                .map_err(|_err| Error::NoBestStrategyFit)?;
 
             if debug {
                 println!("best heuristic: selected the {} setup", plan.setup);
@@ -129,8 +129,7 @@ async fn manage_screens(
 
     if diagram {
         let mut buf = String::new();
-        plan.diagram(&mut buf)
-            .map_err(|err| Error::Generic(err.to_string().into()))?;
+        plan.diagram(&mut buf).map_err(|err| Error::Diagram(err))?;
 
         println!("{buf}\n");
     }

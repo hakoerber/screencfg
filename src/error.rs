@@ -1,64 +1,40 @@
 use std::{fmt, process::ExitCode};
 
-use super::{output, workspace};
+use super::{ordering, output, plan, workspace};
 
 use thiserror::Error;
 
-#[derive(Debug)]
-pub(crate) enum Msg {
-    Owned(String),
-    Static(&'static str),
-}
-
-impl From<&'static str> for Msg {
-    fn from(value: &'static str) -> Self {
-        Self::Static(value)
-    }
-}
-
-impl From<String> for Msg {
-    fn from(value: String) -> Self {
-        Self::Owned(value)
-    }
-}
-
-impl fmt::Display for Msg {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match *self {
-                Self::Owned(ref s) => s.as_str(),
-                Self::Static(s) => s,
-            }
-        )
-    }
-}
-
 #[derive(Debug, Error)]
 pub(crate) enum Error {
-    #[error("error: {0}")]
-    Generic(Msg),
-    #[error("command failed: {0}")]
-    Command(Msg),
-    #[error("classification failed: {0}")]
-    Classify(Msg),
+    #[error("diagram output error: {0}")]
+    Diagram(fmt::Error),
+    #[error("ordering parse error: {0}")]
+    OrderingParse(#[from] ordering::ParseError),
+    #[error("could not classify output: {name}")]
+    Classify { name: output::Name },
     #[error("workstation failed: no screens found")]
     WorkstationWithoutScreens,
-    #[error("workstation failed: {0}")]
-    Workstation(Msg),
+    #[error("workstation failed: multiple laptop screens found ({count})")]
+    WorkstationWithMultipleLaptopScreens { count: usize },
     #[error("plan failed: {0}")]
-    Plan(Msg),
+    Plan(#[from] plan::Error),
+    #[error("apply failed: {0}")]
+    Apply(#[from] plan::ApplyError),
+    #[error("no plan fit with \"best\" strategy")]
+    NoBestStrategyFit,
     #[error("sway: {0}")]
-    I3(#[from] sway::Error),
-    #[error("invalid setup: {0}")]
-    InvalidSetup(Msg),
+    Sway(#[from] sway::Error),
     #[error("output name validation failed: {0}")]
     OutputNameValidation(#[from] output::NameError),
     #[error("workspace name validation failed: {0}")]
     WorkspaceNameValidation(#[from] workspace::NameError),
     #[error("installation of global tracing subscriber failed: {0}")]
     TracingSetGlobalDefaultSubscriber(#[from] tracing::dispatcher::SetGlobalDefaultError),
+    #[error("output of workspace {workspace} ({output}) not found in sway outputs")]
+    WorkspaceOutputMismatch {
+        workspace: workspace::Name,
+        output: output::Name,
+    },
 }
 
 impl From<Error> for ExitCode {

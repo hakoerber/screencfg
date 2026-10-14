@@ -2,11 +2,36 @@ use std::{fmt, iter};
 
 use nonempty::NonEmptyVec;
 use sway::Conn as _;
+use thiserror::Error;
 
 use super::{
-    OutputActiveState, OutputSetting, Setup, WorkspaceSetting, Workstation, error::Error, output,
-    output::Output, workspace::Number as WorkspaceNumber, workspace::Workspaces,
+    OutputActiveState, OutputSetting, Setup, WorkspaceSetting, Workstation, output, output::Output,
+    workspace::Number as WorkspaceNumber, workspace::Workspaces,
 };
+
+#[derive(Debug, Error)]
+pub(crate) enum Error {
+    #[error("no monitor outputs found")]
+    NoMonitors,
+    #[error("no laptop output found")]
+    NoLaptop,
+    #[error("more than 2 monitor monitors not supported")]
+    MoreThanTwoMonitors,
+    #[error("only workspaces between 1 and 10 are supported, found {number}")]
+    WorkspaceNumber { number: usize },
+    #[error("no monitor screen for projector found")]
+    NoMonitorForProjector,
+    #[error("no projector possible without laptop")]
+    NoLaptopForProjector,
+    #[error("can only project with single monitor screen, {count} found")]
+    ProjectWithMultipleScreens { count: usize },
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum ApplyError {
+    #[error("sway error: {0}")]
+    Sway(#[from] sway::Error),
+}
 
 #[derive(Debug)]
 #[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
@@ -175,7 +200,7 @@ impl<'out> Plan<'_, 'out> {
     pub(crate) async fn apply(
         sway: &mut sway::Connection,
         commands: Vec<Command<'out>>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ApplyError> {
         // we need to do the output commands first, as sway may create new workspaces automatically on newly
         // created outputs.
 
@@ -251,207 +276,6 @@ impl<'out> Plan<'_, 'out> {
 }
 
 impl<'ws, 'out> Workstation<'out> {
-    fn all_on_laptop(
-        workspaces: &'ws Workspaces<'out>,
-        laptop: &'out Output,
-        monitors: Option<&NonEmptyVec<&'out Output>>,
-        setup: Setup,
-    ) -> Plan<'ws, 'out> {
-        let output_settings = {
-            let mut outputs = vec![laptop.set(OutputActiveState::On {
-                position: output::Position::null(),
-            })];
-            outputs.append(&mut match monitors {
-                None => vec![],
-                Some(monitors) => monitors
-                    .iter()
-                    .map(|ext| ext.set(OutputActiveState::Off))
-                    .collect(),
-            });
-            outputs
-        };
-
-        let workspace_settings = workspaces
-            .0
-            .iter()
-            .map(|workspace| {
-                if workspace.output.name == laptop.name {
-                    WorkspaceSetting::Unchanged { workspace }
-                } else {
-                    WorkspaceSetting::Change {
-                        workspace,
-                        output: laptop,
-                    }
-                }
-            })
-            .collect();
-
-        Plan {
-            output_settings,
-            workspace_settings,
-            setup,
-        }
-    }
-
-    fn all_on_monitor(
-        workspaces: &'ws Workspaces<'out>,
-        laptop: Option<&'out Output>,
-        monitors: &NonEmptyVec<&'out Output>,
-        max_output_height: output::Height,
-        setup: Setup,
-    ) -> Result<Plan<'ws, 'out>, Error> {
-        Ok(Plan {
-            output_settings: {
-                // keeping track of horizontal position, from left to right
-                let mut pos_x_cursor = output::PosX(0);
-
-                let mut outputs: Vec<_> = monitors
-                    .iter()
-                    .map(|output| {
-                        let out = output.set(OutputActiveState::On {
-                            position: output::Position {
-                                x: pos_x_cursor,
-                                y: max_output_height
-                                    .sub(output.mode.height)
-                                    .end()
-                                    .expect("always positive, as max_height >= height"),
-                            },
-                        });
-
-                        // advance cursor to the right
-                        pos_x_cursor.add(output::PosX(output.mode.width.into_inner()));
-                        out
-                    })
-                    .collect();
-
-                if let Some(laptop) = laptop {
-                    outputs.push(laptop.set(OutputActiveState::Off));
-                }
-                outputs
-            },
-            workspace_settings: {
-                let mut v = vec![];
-                for workspace in &workspaces.0 {
-                    let target_output = match workspace.num.into_inner() {
-                        1..=5 => *monitors.first(),
-                        6..=10 => match monitors.len() {
-                            1 => *monitors.first(),
-                            2 => monitors.get(1).expect("checked len above"),
-                            _ => {
-                                return Err(Error::InvalidSetup(
-                                    "more than 2 monitor monitors not supported".into(),
-                                ));
-                            }
-                        },
-                        _ => {
-                            return Err(Error::InvalidSetup(
-                                "only workspaces between 1 and 10 are supported".into(),
-                            ));
-                        }
-                    };
-                    {
-                        v.push(if workspace.output.name == target_output.name {
-                            WorkspaceSetting::Unchanged { workspace }
-                        } else {
-                            WorkspaceSetting::Change {
-                                workspace,
-                                output: target_output,
-                            }
-                        });
-                    }
-                }
-                v
-            },
-            setup,
-        })
-    }
-
-    fn projector(
-        workspaces: &'ws Workspaces<'out>,
-        laptop: &'out Output,
-        monitor: &'out Output,
-        setup: Setup,
-    ) -> Result<Plan<'ws, 'out>, Error> {
-        let mut workspace_settings = vec![];
-        for workspace in &workspaces.0 {
-            let target_output = match workspace.num.into_inner() {
-                0..=9 => laptop,
-                10 => monitor,
-                _ => {
-                    return Err(Error::InvalidSetup(
-                        "only workspaces between 1 and 10 are supported".into(),
-                    ));
-                }
-            };
-            workspace_settings.push(if workspace.output.name == target_output.name {
-                WorkspaceSetting::Unchanged { workspace }
-            } else {
-                WorkspaceSetting::Change {
-                    workspace,
-                    output: target_output,
-                }
-            });
-        }
-
-        let mut output_settings = vec![monitor.set(OutputActiveState::On {
-            position: output::Position::null(),
-        })];
-
-        // put laptop below projector output, aligned left
-        output_settings.push(laptop.set(OutputActiveState::On {
-            position: output::Position {
-                x: output::PosX(0),
-                y: output::PosY(monitor.mode.height.into_inner()),
-            },
-        }));
-
-        Ok(Plan {
-            output_settings,
-            workspace_settings,
-            setup,
-        })
-    }
-
-    fn distribute_workspaces(
-        workspaces: &'ws Workspaces<'out>,
-        laptop: &'out Output,
-        monitors: &NonEmptyVec<&'out Output>,
-    ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
-        let mut v = vec![];
-        for workspace in &workspaces.0 {
-            let target_output = match workspace.num.into_inner() {
-                7..=10 => laptop,
-                i @ 1..=6 => match monitors.len() {
-                    1 => monitors.first(),
-                    2 => match i {
-                        1 => monitors.first(),
-                        2..=6 => monitors.get(1).expect("checked the range above"),
-                        _ => unreachable!("checked the range above"),
-                    },
-                    _ => {
-                        return Err(Error::InvalidSetup(
-                            "more than 2 monitor monitors not supported".into(),
-                        ));
-                    }
-                },
-                _ => {
-                    return Err(Error::InvalidSetup(
-                        "only workspaces between 1 and 10 are supported".into(),
-                    ));
-                }
-            };
-            v.push(if workspace.output.name == target_output.name {
-                WorkspaceSetting::Unchanged { workspace }
-            } else {
-                WorkspaceSetting::Change {
-                    workspace,
-                    output: target_output,
-                }
-            });
-        }
-        Ok(v)
-    }
-
     pub(crate) fn plan(
         &self,
         setup: Setup,
@@ -460,17 +284,13 @@ impl<'ws, 'out> Workstation<'out> {
         match *self {
             Self::LaptopOnly { laptop } => match setup {
                 Setup::LaptopLeft | Setup::LaptopRight | Setup::MonitorOnly => {
-                    Err(Error::Plan("no monitor outputs found".into()))
+                    Err(Error::NoMonitors)
                 }
                 Setup::LaptopOnly => Ok(Self::all_on_laptop(workspaces, laptop, None, setup)),
-                Setup::Projector => {
-                    Err(Error::Plan("no monitor screen for projector found".into()))
-                }
+                Setup::Projector => Err(Error::NoMonitorForProjector),
             },
             Self::MonitorOnly { ref monitors } => match setup {
-                Setup::LaptopLeft | Setup::LaptopRight | Setup::LaptopOnly => {
-                    Err(Error::Plan("no laptop output found".into()))
-                }
+                Setup::LaptopLeft | Setup::LaptopRight | Setup::LaptopOnly => Err(Error::NoLaptop),
                 Setup::MonitorOnly => Self::all_on_monitor(
                     workspaces,
                     None,
@@ -478,7 +298,7 @@ impl<'ws, 'out> Workstation<'out> {
                     self.max_output_height(),
                     setup,
                 ),
-                Setup::Projector => Err(Error::Plan("no projector possible without laptop".into())),
+                Setup::Projector => Err(Error::NoLaptopForProjector),
             },
             Self::Mixed {
                 laptop,
@@ -572,12 +392,200 @@ impl<'ws, 'out> Workstation<'out> {
                 ),
                 Setup::Projector => match monitors.len() {
                     1 => Self::projector(workspaces, laptop, monitors.first(), setup),
-                    count => Err(Error::Plan(
-                        format!("can only project with single monitor screen, {count} found")
-                            .into(),
-                    )),
+                    count => Err(Error::ProjectWithMultipleScreens { count }),
                 },
             },
         }
+    }
+
+    fn all_on_laptop(
+        workspaces: &'ws Workspaces<'out>,
+        laptop: &'out Output,
+        monitors: Option<&NonEmptyVec<&'out Output>>,
+        setup: Setup,
+    ) -> Plan<'ws, 'out> {
+        let output_settings = {
+            let mut outputs = vec![laptop.set(OutputActiveState::On {
+                position: output::Position::null(),
+            })];
+            outputs.append(&mut match monitors {
+                None => vec![],
+                Some(monitors) => monitors
+                    .iter()
+                    .map(|ext| ext.set(OutputActiveState::Off))
+                    .collect(),
+            });
+            outputs
+        };
+
+        let workspace_settings = workspaces
+            .0
+            .iter()
+            .map(|workspace| {
+                if workspace.output.name == laptop.name {
+                    WorkspaceSetting::Unchanged { workspace }
+                } else {
+                    WorkspaceSetting::Change {
+                        workspace,
+                        output: laptop,
+                    }
+                }
+            })
+            .collect();
+
+        Plan {
+            output_settings,
+            workspace_settings,
+            setup,
+        }
+    }
+
+    fn all_on_monitor(
+        workspaces: &'ws Workspaces<'out>,
+        laptop: Option<&'out Output>,
+        monitors: &NonEmptyVec<&'out Output>,
+        max_output_height: output::Height,
+        setup: Setup,
+    ) -> Result<Plan<'ws, 'out>, Error> {
+        Ok(Plan {
+            output_settings: {
+                // keeping track of horizontal position, from left to right
+                let mut pos_x_cursor = output::PosX(0);
+
+                let mut outputs: Vec<_> = monitors
+                    .iter()
+                    .map(|output| {
+                        let out = output.set(OutputActiveState::On {
+                            position: output::Position {
+                                x: pos_x_cursor,
+                                y: max_output_height
+                                    .sub(output.mode.height)
+                                    .end()
+                                    .expect("always positive, as max_height >= height"),
+                            },
+                        });
+
+                        // advance cursor to the right
+                        pos_x_cursor.add(output::PosX(output.mode.width.into_inner()));
+                        out
+                    })
+                    .collect();
+
+                if let Some(laptop) = laptop {
+                    outputs.push(laptop.set(OutputActiveState::Off));
+                }
+                outputs
+            },
+            workspace_settings: {
+                let mut v = vec![];
+                for workspace in &workspaces.0 {
+                    let target_output = match workspace.num.into_inner() {
+                        1..=5 => *monitors.first(),
+                        6..=10 => match monitors.len() {
+                            1 => *monitors.first(),
+                            2 => monitors.get(1).expect("checked len above"),
+                            _ => {
+                                return Err(Error::MoreThanTwoMonitors);
+                            }
+                        },
+                        number => {
+                            return Err(Error::WorkspaceNumber { number });
+                        }
+                    };
+                    {
+                        v.push(if workspace.output.name == target_output.name {
+                            WorkspaceSetting::Unchanged { workspace }
+                        } else {
+                            WorkspaceSetting::Change {
+                                workspace,
+                                output: target_output,
+                            }
+                        });
+                    }
+                }
+                v
+            },
+            setup,
+        })
+    }
+
+    fn projector(
+        workspaces: &'ws Workspaces<'out>,
+        laptop: &'out Output,
+        monitor: &'out Output,
+        setup: Setup,
+    ) -> Result<Plan<'ws, 'out>, Error> {
+        let mut workspace_settings = vec![];
+        for workspace in &workspaces.0 {
+            let target_output = match workspace.num.into_inner() {
+                0..=9 => laptop,
+                10 => monitor,
+                number => {
+                    return Err(Error::WorkspaceNumber { number });
+                }
+            };
+            workspace_settings.push(if workspace.output.name == target_output.name {
+                WorkspaceSetting::Unchanged { workspace }
+            } else {
+                WorkspaceSetting::Change {
+                    workspace,
+                    output: target_output,
+                }
+            });
+        }
+
+        let mut output_settings = vec![monitor.set(OutputActiveState::On {
+            position: output::Position::null(),
+        })];
+
+        // put laptop below projector output, aligned left
+        output_settings.push(laptop.set(OutputActiveState::On {
+            position: output::Position {
+                x: output::PosX(0),
+                y: output::PosY(monitor.mode.height.into_inner()),
+            },
+        }));
+
+        Ok(Plan {
+            output_settings,
+            workspace_settings,
+            setup,
+        })
+    }
+
+    fn distribute_workspaces(
+        workspaces: &'ws Workspaces<'out>,
+        laptop: &'out Output,
+        monitors: &NonEmptyVec<&'out Output>,
+    ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
+        let mut v = vec![];
+        for workspace in &workspaces.0 {
+            let target_output = match workspace.num.into_inner() {
+                7..=10 => laptop,
+                i @ 1..=6 => match monitors.len() {
+                    1 => monitors.first(),
+                    2 => match i {
+                        1 => monitors.first(),
+                        2..=6 => monitors.get(1).expect("checked the range above"),
+                        _ => unreachable!("checked the range above"),
+                    },
+                    _ => {
+                        return Err(Error::MoreThanTwoMonitors);
+                    }
+                },
+                number => {
+                    return Err(Error::WorkspaceNumber { number });
+                }
+            };
+            v.push(if workspace.output.name == target_output.name {
+                WorkspaceSetting::Unchanged { workspace }
+            } else {
+                WorkspaceSetting::Change {
+                    workspace,
+                    output: target_output,
+                }
+            });
+        }
+        Ok(v)
     }
 }

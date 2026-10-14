@@ -175,15 +175,15 @@ impl Class {
         {
             Ok(Self::Monitor)
         } else {
-            Err(Error::Classify(
-                format!("could not classify output: {value}").into(),
-            ))
+            Err(Error::Classify {
+                name: value.clone(),
+            })
         }
     }
 }
 
 #[nutype(
-    derive(Debug, PartialEq, Eq, PartialOrd, Ord, AsRef, Display, Borrow),
+    derive(Debug, PartialEq, Eq, PartialOrd, Ord, AsRef, Display, Borrow, Clone),
     validate(not_empty)
 )]
 pub(crate) struct Name(String);
