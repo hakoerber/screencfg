@@ -27,31 +27,48 @@ impl Debouncer {
         &self,
         channel: &mut mpsc::Receiver<T>,
         cancellation_token: &CancellationToken,
-    ) -> ReadResult<T> {
+    ) -> ReadResult<T>
+    where
+        T: std::fmt::Display,
+    {
+        tracing::debug!(
+            "reading from channel with debounce duration {:?}",
+            self.duration
+        );
         let sleep = time::sleep(self.duration);
         tokio::pin!(sleep);
 
         match channel.recv().await {
             Some(v) => loop {
                 return tokio::select! {
-                    () = &mut sleep => {
-                        ReadResult::Ok(v)
+                    biased;
+                    () = cancellation_token.cancelled() => {
+                        tracing::debug!("debouncer received cancellation signal");
+                        ReadResult::Cancelled
                     },
                     v = channel.recv() => {
                         match v {
                             Some(v) => {
+                                tracing::debug!("debouncer received \"{v}\" during debounce duration, dropping");
                                 drop(v);
                                 continue;
                             }
-                            None => ReadResult::Closed,
+                            None => {
+                                tracing::debug!("debouncer notices closed channel, aborting");
+                                ReadResult::Closed
+                            }
                         }
                     },
-                    () = cancellation_token.cancelled() => {
-                        ReadResult::Cancelled
-                    }
+                    () = &mut sleep => {
+                        tracing::debug!("debounce duration elapsed, emitting \"{v}\"");
+                        ReadResult::Ok(v)
+                    },
                 };
             },
-            None => ReadResult::Closed,
+            None => {
+                tracing::debug!("debouncer called with closed channel, aborting");
+                ReadResult::Closed
+            }
         }
     }
 }

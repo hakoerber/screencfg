@@ -134,6 +134,7 @@ version = "0.6.2"
 dependencies = [
  "tokio",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]
