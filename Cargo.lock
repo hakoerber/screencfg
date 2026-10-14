@@ -130,7 +130,7 @@ dependencies = [
 
 [[package]]
 name = "debounce"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "tokio",
  "tokio-util",
@@ -248,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "nonempty"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "tap",
 ]
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "screencfg"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "clap",
  "derive_more",
@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "sway"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "debounce",
  "derive_more",
