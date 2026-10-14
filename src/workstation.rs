@@ -74,7 +74,7 @@ impl<'out> UnorderedWorkstation<'out> {
         }
 
         match (laptop, monitors) {
-            (None, None) => Err(Error::Workstation("no screens found".into())),
+            (None, None) => Err(Error::WorkstationWithoutScreens),
             (None, Some(monitors)) => Ok(Self::MonitorOnly { monitors }),
             (Some(laptop), None) => Ok(Self::LaptopOnly { laptop }),
             (Some(laptop), Some(monitors)) => Ok(Self::Mixed { laptop, monitors }),

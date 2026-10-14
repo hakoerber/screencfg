@@ -43,6 +43,8 @@ pub(crate) enum Error {
     Command(Msg),
     #[error("classification failed: {0}")]
     Classify(Msg),
+    #[error("workstation failed: no screens found")]
+    WorkstationWithoutScreens,
     #[error("workstation failed: {0}")]
     Workstation(Msg),
     #[error("plan failed: {0}")]

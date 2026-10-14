@@ -221,7 +221,16 @@ async fn run() -> Result<(), Error> {
             let Err(err) = subscription
                 .start_event_listener::<_, Error>(Duration::from_millis(2000), async move |event| {
                     eprintln!("received event from sway: {event}");
-                    setter().await?;
+                    match setter().await {
+                        Ok(()) => (),
+                        Err(err) => match err {
+                            Error::WorkstationWithoutScreens => {
+                                // It can happen that all screens are disconnected. in that case, we do *not* fail hard,
+                                // but just do nothing. If a screen is connected again, we can handle it.
+                            }
+                            _ => return Err(err),
+                        },
+                    }
 
                     Ok::<(), Error>(())
                 })
