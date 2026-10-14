@@ -1,6 +1,6 @@
 #![expect(clippy::unwrap_used, reason = "it's just for testing")]
 
-use std::{convert::Infallible, time::Duration};
+use std::{convert::Infallible, io, time::Duration};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -25,7 +25,10 @@ pub struct MockConnection {
 impl MockConnection {
     fn check_fail(&self) -> Result<(), Error> {
         if self.fail {
-            Err(Error::Connection("fail".into()))
+            Err(Error::ConnectError(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                "oh oh",
+            )))
         } else {
             Ok(())
         }

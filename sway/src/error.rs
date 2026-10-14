@@ -1,44 +1,35 @@
-use std::{fmt, io};
+use std::io;
 
 use thiserror::Error;
 
 use super::{OutputNameError, ResponseType, WorkspaceNameError};
 
-#[derive(Debug)]
-pub enum Msg {
-    Owned(String),
-    Static(&'static str),
-}
-
-impl From<&'static str> for Msg {
-    fn from(value: &'static str) -> Self {
-        Self::Static(value)
-    }
-}
-
-impl From<String> for Msg {
-    fn from(value: String) -> Self {
-        Self::Owned(value)
-    }
-}
-
-impl fmt::Display for Msg {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match *self {
-                Self::Owned(ref s) => s.as_str(),
-                Self::Static(s) => s,
-            }
-        )
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("command to get socketpath failed: {0}")]
+    GetSocketpath(io::Error),
+    #[error("creating socket from socketpath failed: {0}")]
+    InvalidSocketpath(io::Error),
     #[error("connection failed: {0}")]
-    Connection(Msg),
+    ConnectError(io::Error),
+    #[error("sending to socket failed: {0}")]
+    SendFailed(io::Error),
+    #[error("reading from socket failed: {0}")]
+    ReadFailed(io::Error),
+    #[error("response too short for even the magic string")]
+    ResponseTooShortForMagicString,
+    #[error("magic string not found, instead received {instead:?}")]
+    MagicStringNotFound { instead: Vec<u8> },
+    #[error("not enough bytes for response length")]
+    ResponseTooShortForResponseLength,
+    #[error("not enough bytes for command")]
+    ResponseTooShortForCommand,
+    #[error("u32 overflowed usize")]
+    U32Overflow,
+    #[error("payload length bigger than 4 bytes")]
+    PayloadLengthTooBig,
+    #[error("failed parsing json response: {0}")]
+    JsonParse(serde_json::Error),
     #[error("received unexpected response (expected {expected}, received {received})")]
     UnexpectedResponse {
         expected: ResponseType,
@@ -46,29 +37,21 @@ pub enum Error {
     },
     #[error("unknown response command (event {event}): {id}")]
     UnknownResponseCommand { id: u32, event: bool },
-    #[error("error response from {response_type}: {msg}")]
+    #[error("error response from {response_type}: {msg}", msg = match *msg {
+        Some(ref message) => message,
+        None => "no error message",
+    })]
     ErrorResponse {
         response_type: ResponseType,
-        msg: Msg,
+        msg: Option<String>,
     },
-    #[error("command failed: {0}")]
-    Command(Msg),
-    #[error("protocol error: {0}")]
-    Protocol(Msg),
+    #[error("command failed: {}", match *message {
+        Some(ref message) => message,
+        None => "unknown error"
+    })]
+    Command { message: Option<String> },
     #[error("output name validation failed: {0}")]
     OutputNameValidation(#[from] OutputNameError),
     #[error("workspace name validation failed: {0}")]
     WorkspaceNameValidation(#[from] WorkspaceNameError),
-}
-
-impl From<io::Error> for Error {
-    fn from(value: io::Error) -> Self {
-        Self::Command(Msg::Owned(value.to_string()))
-    }
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(value: serde_json::Error) -> Self {
-        Self::Connection(Msg::Owned(value.to_string()))
-    }
 }

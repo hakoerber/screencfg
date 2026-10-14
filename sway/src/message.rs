@@ -90,7 +90,7 @@ impl Message<'_> {
         message.extend_from_slice(MAGIC_STRING.as_bytes());
         message.extend_from_slice(
             &u32::try_from(payload.as_ref().map_or(0, |l| l.len()))
-                .map_err(|_err| Error::Protocol("payload length bigger than 4 bytes".into()))?
+                .map_err(|_err| Error::PayloadLengthTooBig)?
                 .to_ne_bytes(),
         );
         message.extend_from_slice(&(command_number.to_ne_bytes()));
@@ -104,7 +104,10 @@ impl Message<'_> {
         tracing::debug!(message = ?self, "sending sway message");
         let message = self.bytes()?;
         tracing::debug!("sending bytes {message:?}");
-        socket.write_all(&message).await?;
+        socket
+            .write_all(&message)
+            .await
+            .map_err(|err| Error::SendFailed(err))?;
         tracing::debug!("bytes sent");
         Ok(())
     }
@@ -303,36 +306,40 @@ pub(crate) enum Response {
 impl Response {
     pub(crate) async fn read(stream: &mut Connection) -> Result<Self, Error> {
         tracing::debug!("reading response");
-        let mut response =
-            vec![
-                0;
-                MAGIC_STRING
-                    .chars()
-                    .count()
-                    .checked_add(
-                        // for response length
-                        4 +
+        let mut response = vec![
+            0;
+            MAGIC_STRING
+                .chars()
+                .count()
+                .checked_add(
+                    // for response length
+                    4 +
                     // for command
                     4
-                    )
-                    .ok_or_else(|| { Error::Protocol("payload length overflowed".into()) })?
-            ];
+                )
+                .expect("this will always fit an usize")
+        ];
 
-        let _bytes_count = stream.read_exact(&mut response).await?;
+        let _bytes_count = stream
+            .read_exact(&mut response)
+            .await
+            .map_err(|err| Error::ReadFailed(err));
 
         tracing::debug!("received response {response:?}");
 
-        if response
+        let magic_string = response
             .get(0..6)
-            .ok_or_else(|| Error::Protocol("response too short for even the magic string".into()))?
-            != MAGIC_STRING.as_bytes()
-        {
-            return Err(Error::Protocol("magic string not found".into()));
+            .ok_or(Error::ResponseTooShortForMagicString)?;
+
+        if magic_string != MAGIC_STRING.as_bytes() {
+            return Err(Error::MagicStringNotFound {
+                instead: magic_string.to_vec(),
+            });
         }
         let response_length = {
             let bytes = response
                 .get(6..10)
-                .ok_or_else(|| Error::Protocol("not enough bytes for response length".into()))?;
+                .ok_or(Error::ResponseTooShortForResponseLength)?;
 
             let bytes = bytes
                 .try_into()
@@ -344,7 +351,7 @@ impl Response {
         let response_command = {
             let bytes = response
                 .get(10..14)
-                .ok_or_else(|| Error::Protocol("not enough bytes for command".into()))?;
+                .ok_or(Error::ResponseTooShortForCommand)?;
 
             let bytes = bytes
                 .try_into()
@@ -357,23 +364,29 @@ impl Response {
             0;
             response_length
                 .try_into()
-                .map_err(|_err| { Error::Protocol("u32 overflowed usize".into()) })?
+                .map_err(|_err| { Error::U32Overflow })?
         ];
 
-        let _bytes_count = stream.read_exact(&mut response).await?;
+        let _bytes_count = stream
+            .read_exact(&mut response)
+            .await
+            .map_err(|err| Error::ReadFailed(err))?;
 
         // highest bit indicates event response
         if response_command >> 31_u8 == 1 {
             let response_command = response_command & !(1 << 31_u8);
             Ok(Self::SubscriptionEvent(match response_command {
-                0 => EventPayload::Workspace(serde_json::from_slice(&response)?),
+                0 => EventPayload::Workspace(
+                    serde_json::from_slice(&response).map_err(|err| Error::JsonParse(err))?,
+                ),
                 1 => {
                     #[derive(Debug, serde::Deserialize)]
                     struct EventResponseOutput {
                         change: String,
                     }
 
-                    let response: EventResponseOutput = serde_json::from_slice(&response)?;
+                    let response: EventResponseOutput =
+                        serde_json::from_slice(&response).map_err(|err| Error::JsonParse(err))?;
                     assert_eq!(response.change, "unspecified", "this is a static response");
                     EventPayload::Output
                 }
@@ -381,11 +394,21 @@ impl Response {
             }))
         } else {
             match response_command {
-                0 => Ok(Self::Command(serde_json::from_slice(&response)?)),
-                1 => Ok(Self::Workspaces(serde_json::from_slice(&response)?)),
-                2 => Ok(Self::Subscription(serde_json::from_slice(&response)?)),
-                3 => Ok(Self::Outputs(serde_json::from_slice(&response)?)),
-                7 => Ok(Self::Version(serde_json::from_slice(&response)?)),
+                0 => Ok(Self::Command(
+                    serde_json::from_slice(&response).map_err(|err| Error::JsonParse(err))?,
+                )),
+                1 => Ok(Self::Workspaces(
+                    serde_json::from_slice(&response).map_err(|err| Error::JsonParse(err))?,
+                )),
+                2 => Ok(Self::Subscription(
+                    serde_json::from_slice(&response).map_err(|err| Error::JsonParse(err))?,
+                )),
+                3 => Ok(Self::Outputs(
+                    serde_json::from_slice(&response).map_err(|err| Error::JsonParse(err))?,
+                )),
+                7 => Ok(Self::Version(
+                    serde_json::from_slice(&response).map_err(|err| Error::JsonParse(err))?,
+                )),
                 id => Err(Error::UnknownResponseCommand { id, event: false }),
             }
         }

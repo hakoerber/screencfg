@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 tokio = { workspace = true, default-features = false, features = [] }
 tokio-util = { workspace = true, default-features = false }
+tracing = { workspace = true, default-features = false }
 
 [features]
 

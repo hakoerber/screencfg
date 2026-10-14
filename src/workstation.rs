@@ -49,10 +49,8 @@ impl<'out> UnorderedWorkstation<'out> {
         let laptop = match laptops.len() {
             0 => None,
             1 => Some(laptops.remove(0)),
-            _ => {
-                return Err(Error::Workstation(
-                    "found more than one laptop screen".into(),
-                ));
+            count => {
+                return Err(Error::WorkstationWithMultipleLaptopScreens { count });
             }
         };
 
@@ -67,14 +65,10 @@ impl<'out> UnorderedWorkstation<'out> {
             _ => Some(NonEmptyVec::new(monitors).expect("checked for len explicitly")),
         };
 
-        if !rest.is_empty() {
-            return Err(Error::Generic(
-                "screens that are neither Monitor nor Laptop found".into(),
-            ));
-        }
+        assert!(rest.is_empty(), "screens that are neither Monitor nor Laptop found, this is a bug");
 
         match (laptop, monitors) {
-            (None, None) => Err(Error::Workstation("no screens found".into())),
+            (None, None) => Err(Error::WorkstationWithoutScreens),
             (None, Some(monitors)) => Ok(Self::MonitorOnly { monitors }),
             (Some(laptop), None) => Ok(Self::LaptopOnly { laptop }),
             (Some(laptop), Some(monitors)) => Ok(Self::Mixed { laptop, monitors }),

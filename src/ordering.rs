@@ -1,7 +1,6 @@
 use std::num::ParseIntError;
 use tap::prelude::*;
-
-use super::error::Error;
+use thiserror::Error;
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(Eq, PartialEq))]
@@ -10,28 +9,44 @@ pub(crate) enum MonitorOrdering {
     Custom { order: Vec<usize> },
 }
 
+#[derive(Debug, Error)]
+#[expect(
+    variant_size_differences,
+    reason = "two usizes (16 bytes usually) are still acceptable"
+)]
+pub(crate) enum ParseError {
+    #[error("parsing ordering failed: not an integer: {0}")]
+    OrderNotAnInteger(ParseIntError),
+    #[error(
+        "custom ordering (length {length}) needs to be the same length as number of monitors ({outputs})"
+    )]
+    OrderLengthMismatch { length: usize, outputs: usize },
+    #[error("custom ordering needs to contain incrementing integers only")]
+    NonIncrementing,
+}
+
 impl MonitorOrdering {
-    pub(crate) fn parse_from_str(input: &str, monitor_output_count: usize) -> Result<Self, Error> {
+    pub(crate) fn parse_from_str(
+        input: &str,
+        monitor_output_count: usize,
+    ) -> Result<Self, ParseError> {
         let elems = input
             .split(',')
             .map(str::parse::<usize>)
             .collect::<Result<Vec<usize>, ParseIntError>>()
-            .map_err(|err| {
-                Error::Command(format!("could not parse order as integer: {err}").into())
-            })?;
+            .map_err(|err| ParseError::OrderNotAnInteger(err))?;
 
         if monitor_output_count != elems.len() {
-            return Err(Error::Command(
-                "custom ordering needs to be the same length as number of outputs".into(),
-            ));
+            return Err(ParseError::OrderLengthMismatch {
+                length: elems.len(),
+                outputs: monitor_output_count,
+            });
         }
 
         let sorted = elems.clone().tap_mut(|f| f.sort_unstable());
 
         if sorted != (1..=(elems.len())).collect::<Vec<usize>>() {
-            return Err(Error::Command(
-                "custom ordering needs to contain incrementing integers only".into(),
-            ));
+            return Err(ParseError::NonIncrementing);
         }
 
         Ok(Self::Custom { order: elems })

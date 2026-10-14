@@ -105,11 +105,9 @@ impl Conn for Connection {
             Response::Command(commands) => {
                 for payload in commands {
                     if !payload.success {
-                        return Err(Error::Command(
-                            payload
-                                .error
-                                .map_or_else(|| "unknown error".into(), Into::into),
-                        ));
+                        return Err(Error::Command {
+                            message: payload.error,
+                        });
                     }
                 }
                 Ok(())
@@ -145,10 +143,7 @@ impl Conn for Connection {
                 if !subscription_response.success {
                     return Err(Error::ErrorResponse {
                         response_type: ResponseType::Subscription,
-                        msg: match subscription_response.error {
-                            Some(message) => message.into(),
-                            None => "no error message".into(),
-                        },
+                        msg: subscription_response.error,
                     });
                 }
             }

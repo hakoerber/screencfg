@@ -114,7 +114,7 @@ async fn manage_screens(
                 .plan(Setup::LaptopLeft, &workspaces)
                 .or_else(|_| workstation.plan(Setup::LaptopOnly, &workspaces))
                 .or_else(|_| workstation.plan(Setup::MonitorOnly, &workspaces))
-                .map_err(|_err| Error::Plan("no plan fit with \"best\" strategy".into()))?;
+                .map_err(|_err| Error::NoBestStrategyFit)?;
 
             if debug {
                 println!("best heuristic: selected the {} setup", plan.setup);
@@ -129,8 +129,7 @@ async fn manage_screens(
 
     if diagram {
         let mut buf = String::new();
-        plan.diagram(&mut buf)
-            .map_err(|err| Error::Generic(err.to_string().into()))?;
+        plan.diagram(&mut buf).map_err(|err| Error::Diagram(err))?;
 
         println!("{buf}\n");
     }
@@ -221,7 +220,16 @@ async fn run() -> Result<(), Error> {
             let Err(err) = subscription
                 .start_event_listener::<_, Error>(Duration::from_millis(2000), async move |event| {
                     eprintln!("received event from sway: {event}");
-                    setter().await?;
+                    match setter().await {
+                        Ok(()) => (),
+                        Err(err) => match err {
+                            Error::WorkstationWithoutScreens => {
+                                // It can happen that all screens are disconnected. in that case, we do *not* fail hard,
+                                // but just do nothing. If a screen is connected again, we can handle it.
+                            }
+                            _ => return Err(err),
+                        },
+                    }
 
                     Ok::<(), Error>(())
                 })

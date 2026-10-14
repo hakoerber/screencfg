@@ -17,21 +17,19 @@ impl<'out> Workspaces<'out> {
                 .into_iter()
                 .map(|from| {
                     let output_name_from_sway_workspaces: OutputName = from.output.try_into()?;
+                    let workspace_name: Name = from.name.try_into()?;
+                    let output = outputs
+                        .iter()
+                        .find(|output| output_name_from_sway_workspaces == output.name)
+                        .ok_or_else(|| Error::WorkspaceOutputMismatch {
+                            workspace: workspace_name.clone(),
+                            output: output_name_from_sway_workspaces,
+                        })?;
+
                     Ok(Workspace {
                         num: from.num.into(),
-                        name: from.name.try_into()?,
-                        output: outputs
-                            .iter()
-                            .find(|output| output_name_from_sway_workspaces == output.name)
-                            .ok_or_else(|| {
-                                Error::Generic(
-                                    format!(
-                                        "output of workspace {} ({}) not found in sway outputs",
-                                        from.num, output_name_from_sway_workspaces
-                                    )
-                                    .into(),
-                                )
-                            })?,
+                        name: workspace_name,
+                        output,
                     })
                 })
                 .collect::<Result<Vec<Workspace<'_>>, Error>>()?,
@@ -39,7 +37,7 @@ impl<'out> Workspaces<'out> {
     }
 }
 
-#[nutype(derive(Debug, PartialEq, Eq, Display), validate(not_empty))]
+#[nutype(derive(Debug, PartialEq, Eq, Display, Clone), validate(not_empty))]
 pub(crate) struct Name(String);
 
 impl TryFrom<sway::WorkspaceName> for Name {

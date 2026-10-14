@@ -81,17 +81,22 @@ impl Subscription {
     ) -> Result<Infallible, E>
     where
         F: AsyncFnMut(EventPayload) -> Result<(), E>,
-        E: From<Error>,
+        E: From<Error> + std::error::Error,
         // this can be enabled when async_fn_traits is stabilized:
         //
         // for<'a> F::CallRefFuture<'a>: Send,
     {
+        tracing::debug!("creating event channel");
         let (tx, mut rx) = mpsc::channel(100);
         let cancellation_token = CancellationToken::new();
 
+        tracing::debug!("starting event subscriber task");
         let event_subscriber = {
             let cancellation_token = cancellation_token.clone();
-            tokio::spawn(async move { self.listen(tx, debounce_time, cancellation_token).await })
+            tokio::spawn(async move {
+                tracing::debug!("started event subscriber task");
+                self.listen(tx, debounce_time, cancellation_token).await
+            })
         };
 
         // this can be enabled when async_fn_traits is stabilized, to run the handler
@@ -115,9 +120,11 @@ impl Subscription {
         // .expect("event handler thread to not panic");
 
         let event_handler_result: ReadResult<Infallible, E> = loop {
+            tracing::debug!("waiting for event in event handler");
             match rx.recv().await {
                 Some(event) => {
                     let event = event?;
+                    tracing::debug!("reveived event: {event}");
                     let handler_result = handler(event).await;
                     if let Err(err) = handler_result {
                         break Err(err).into();
@@ -128,12 +135,15 @@ impl Subscription {
         };
 
         // Event handler finished, we can cancel the subscriber
+        tracing::debug!("event handler exited, cancelling subscriber");
         cancellation_token.cancel();
 
         // Wait for subscriber to finish
         let event_subscriber_result = event_subscriber
             .await
             .expect("event subscriber thread to not panic");
+
+        tracing::debug!("event subscriber exited");
 
         // Now we have a few scenarios, each being some error case:
         //
@@ -149,8 +159,14 @@ impl Subscription {
             (ReadResult::Closed, TaskResult::Cancelled) => {
                 panic!("threads finished unexpectedly without an error")
             }
-            (ReadResult::Closed, TaskResult::Err(err)) => err.into(),
-            (ReadResult::Err(err), TaskResult::Cancelled) => err,
+            (ReadResult::Closed, TaskResult::Err(err)) => {
+                tracing::debug!("event subscriber produced error: {err}");
+                err.into()
+            }
+            (ReadResult::Err(err), TaskResult::Cancelled) => {
+                tracing::debug!("event handler produced error: {err}");
+                err
+            }
             (ReadResult::Err(_err1), TaskResult::Err(_err2)) => {
                 panic!("teardown of subscriber seems to have produced an error")
             }
@@ -165,12 +181,15 @@ impl Subscribe for Subscription {
         debounce_time: Duration,
         cancellation_token: CancellationToken,
     ) -> TaskResult<Infallible, Error> {
+        tracing::debug!("creating debouncer channel");
         let (debounce_tx, mut debounce_rx) = mpsc::channel::<EventPayload>(100);
 
         let _debouncer: JoinHandle<()> = {
             let sender = sender.clone();
             let cancellation_token = cancellation_token.clone();
+            tracing::debug!("starting debouncer task");
             tokio::spawn(async move {
+                tracing::debug!("started debouncer task");
                 let debouncer = debounce::Debouncer::new(debounce_time);
                 loop {
                     let payload = debouncer
@@ -178,10 +197,16 @@ impl Subscribe for Subscription {
                         .await;
 
                     let payload = match payload {
-                        debounce::ReadResult::Ok(payload) => payload,
+                        debounce::ReadResult::Ok(payload) => {
+                            tracing::debug!("received payload from debouncer: {payload}");
+                            payload
+                        }
                         #[expect(clippy::panic, reason = "programming error")]
                         debounce::ReadResult::Closed => panic!("debouncer channel closed"),
-                        debounce::ReadResult::Cancelled => break,
+                        debounce::ReadResult::Cancelled => {
+                            tracing::debug!("debouncer received cancellation");
+                            break;
+                        }
                     };
 
                     sender.send(Ok(payload)).await.expect("sender closed");
@@ -193,13 +218,14 @@ impl Subscribe for Subscription {
             // Note that `Response::read` is *not* cancellation safe. But in case of shutdown,
             // we do not care about remaining data in the receive buffer.
             let response = tokio::select! {
+                biased;
+                () = cancellation_token.cancelled() => {
+                    return TaskResult::Cancelled;
+                },
                 response = Response::read(&mut self.connection) => match response {
                     Ok(response) => response,
                     Err(err) => return Err(err).into(),
                 },
-                () = cancellation_token.cancelled() => {
-                    return TaskResult::Cancelled;
-                }
             };
 
             match response {
@@ -215,8 +241,8 @@ impl Subscribe for Subscription {
                     .await
                     .expect("channel open"),
                 Response::SubscriptionEvent(event_payload) => {
-                    let tx = debounce_tx.clone();
-                    tx.send(event_payload)
+                    debounce_tx
+                        .send(event_payload)
                         .await
                         .expect("debounce channel closed");
                 }
