@@ -348,9 +348,3 @@ impl fmt::Display for Setting<'_> {
         }
     }
 }
-
-// impl Setting<'_> {
-//     pub(crate) fn needs_change(self) -> bool {
-//         self.output.state == self.state
-//     }
-// }
