@@ -11,6 +11,6 @@ fi
 git remote add aur "ssh://aur@aur.archlinux.org/screencfg.git"
 trap "git remote rm aur 2>&1 || true" EXIT
 
-git subtree push --prefix "pkg/arch/screencfg" aur master
+git subtree push --prefix "pkg/arch/" aur master
 
 git remote rm aur
