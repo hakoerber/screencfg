@@ -179,6 +179,7 @@ impl Class {
         } else if value.as_str().starts_with("DP-")
             || value.as_str().starts_with("HDMI-")
             || value.as_str().starts_with("DisplayPort-")
+            || value.as_str().starts_with("Virtual-")
         {
             Ok(Self::Monitor)
         } else {
