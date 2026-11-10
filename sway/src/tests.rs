@@ -88,12 +88,8 @@ impl Conn for MockConnection {
                 2 => Ok(Outputs(vec![
                     Output {
                         name: OutputName::try_new("DP-1".to_owned()).unwrap(),
-                        state: OutputState::Active {
-                            position: Position {
-                                x: PosX(0),
-                                y: PosY(0),
-                            },
-                            mode: OutputMode {
+                        state: OutputState::Inactive {
+                            preferred_mode: OutputMode {
                                 width: Width::new(1920),
                                 height: Height::new(1080),
                                 refresh_rate: RefreshRate::Ms(144),
