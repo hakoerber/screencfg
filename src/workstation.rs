@@ -2,7 +2,7 @@ use tap::Tap as _;
 
 use nonempty::NonEmptyVec;
 
-use super::{Error, Output, OutputClass, ordering::MonitorOrdering, output};
+use super::{Error, Output, OutputClass, OutputState, ordering::MonitorOrdering, output};
 
 #[derive(Debug)]
 #[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
@@ -65,7 +65,10 @@ impl<'out> UnorderedWorkstation<'out> {
             _ => Some(NonEmptyVec::new(monitors).expect("checked for len explicitly")),
         };
 
-        assert!(rest.is_empty(), "screens that are neither Monitor nor Laptop found, this is a bug");
+        assert!(
+            rest.is_empty(),
+            "screens that are neither Monitor nor Laptop found, this is a bug"
+        );
 
         match (laptop, monitors) {
             (None, None) => Err(Error::WorkstationWithoutScreens),
@@ -127,10 +130,22 @@ impl<'out> UnorderedWorkstation<'out> {
 impl Workstation<'_> {
     pub(crate) fn max_output_height(&self) -> output::Height {
         match *self {
-            Workstation::LaptopOnly { laptop } => laptop.mode.height,
+            Workstation::LaptopOnly { laptop } => match laptop.state {
+                OutputState::Active {
+                    position: _,
+                    ref mode,
+                } => mode.height,
+                OutputState::Inactive { ref preferred_mode } => preferred_mode.height,
+            },
             Workstation::MonitorOnly { ref monitors } => monitors
                 .iter()
-                .map(|output| output.mode.height)
+                .map(|output| match output.state {
+                    OutputState::Active {
+                        position: _,
+                        ref mode,
+                    } => mode.height,
+                    OutputState::Inactive { ref preferred_mode } => preferred_mode.height,
+                })
                 .max()
                 .expect("nonempty vec"),
             Workstation::Mixed {
@@ -138,7 +153,13 @@ impl Workstation<'_> {
                 ref monitors,
             } => std::iter::once(&laptop)
                 .chain(monitors)
-                .map(|output| output.mode.height)
+                .map(|output| match output.state {
+                    OutputState::Active {
+                        position: _,
+                        ref mode,
+                    } => mode.height,
+                    OutputState::Inactive { ref preferred_mode } => preferred_mode.height,
+                })
                 .max()
                 .expect("once (plus nonempty vec)"),
         }

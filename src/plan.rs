@@ -5,7 +5,7 @@ use sway::Conn as _;
 use thiserror::Error;
 
 use super::{
-    OutputActiveState, OutputSetting, Setup, WorkspaceSetting, Workstation, output, output::Output,
+    OutputSetting, OutputState, Setup, WorkspaceSetting, Workstation, output, output::Output,
     workspace::Number as WorkspaceNumber, workspace::Workspaces,
 };
 
@@ -84,10 +84,11 @@ impl fmt::Display for Plan<'_, '_> {
 pub(crate) enum Command<'out> {
     SetOutputState {
         output: &'out Output,
-        state: OutputActiveState,
+        state: OutputState,
     },
     MoveWorkspace {
         num: WorkspaceNumber,
+        from: &'out Output,
         output: &'out Output,
     },
 }
@@ -96,10 +97,18 @@ impl fmt::Display for Command<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::SetOutputState { output, ref state } => {
-                write!(f, "setting output {output} to {state}")
+                write!(
+                    f,
+                    "setting output {output} to {state} (currently {current_state})",
+                    current_state = output.state
+                )
             }
-            Self::MoveWorkspace { num, output } => {
-                write!(f, "move workspace {num} to {}", output.name)
+            Self::MoveWorkspace { num, from, output } => {
+                write!(
+                    f,
+                    "move workspace {num} to {} (currently on {})",
+                    output.name, from.name
+                )
             }
         }
     }
@@ -112,7 +121,10 @@ impl<'out> Plan<'_, 'out> {
             .iter()
             .filter(|setting| match **setting {
                 OutputSetting::Unchanged { output } => output.state.is_active(),
-                OutputSetting::Change { output: _, state } => state.is_active(),
+                OutputSetting::Change {
+                    output: _,
+                    ref state,
+                } => state.is_active(),
             })
             .collect::<Vec<_>>();
 
@@ -168,8 +180,11 @@ impl<'out> Plan<'_, 'out> {
         for setting in &self.output_settings {
             match *setting {
                 OutputSetting::Unchanged { output: _ } => (),
-                OutputSetting::Change { output, state } => {
-                    commands.push(Command::SetOutputState { output, state });
+                OutputSetting::Change { output, ref state } => {
+                    commands.push(Command::SetOutputState {
+                        output,
+                        state: state.clone(),
+                    });
                 }
             }
         }
@@ -188,6 +203,7 @@ impl<'out> Plan<'_, 'out> {
 
                     commands.push(Command::MoveWorkspace {
                         num: workspace.num,
+                        from: from,
                         output: to,
                     });
                 }
@@ -211,7 +227,7 @@ impl<'out> Plan<'_, 'out> {
 
         pub(crate) struct SetOutputState<'out> {
             output: &'out Output,
-            state: OutputActiveState,
+            state: OutputState,
         }
 
         pub(crate) struct MoveWorkspace<'out> {
@@ -225,7 +241,11 @@ impl<'out> Plan<'_, 'out> {
                 Command::SetOutputState { output, state } => {
                     Either::A(SetOutputState { output, state })
                 }
-                Command::MoveWorkspace { num, output } => Either::B(MoveWorkspace { num, output }),
+                Command::MoveWorkspace {
+                    num,
+                    output,
+                    from: _,
+                } => Either::B(MoveWorkspace { num, output }),
             })
             .fold(
                 (Vec::new(), Vec::new()),
@@ -243,20 +263,22 @@ impl<'out> Plan<'_, 'out> {
 
         for command in output_commands {
             match command.state {
-                OutputActiveState::On { position } => {
+                OutputState::Active { position, mode } => {
                     sway.command(sway::Command::Output {
                         output_name: (&command.output.name).into(),
-                        state: sway::OutputState::Enabled {
-                            refresh_rate: command.output.mode.refresh_rate.into(),
+                        state: sway::OutputState::Active {
                             position: position.into(),
+                            mode: mode.into(),
                         },
                     })
                     .await?;
                 }
-                OutputActiveState::Off => {
+                OutputState::Inactive { preferred_mode } => {
                     sway.command(sway::Command::Output {
                         output_name: (&command.output.name).into(),
-                        state: sway::OutputState::Disabled,
+                        state: sway::OutputState::Inactive {
+                            preferred_mode: preferred_mode.into(),
+                        },
                     })
                     .await?;
                 }
@@ -316,12 +338,21 @@ impl<'ws, 'out> Workstation<'out> {
                     let output_settings = iter::once(&laptop)
                         .chain(monitors)
                         .map(|output| {
-                            let out = output.set(OutputActiveState::On {
+                            let mode = match output.state {
+                                OutputState::Active {
+                                    position: _,
+                                    ref mode,
+                                } => mode,
+                                OutputState::Inactive { ref preferred_mode } => preferred_mode,
+                            };
+
+                            let out = output.set(OutputState::Active {
+                                mode: mode.clone(),
                                 position: {
                                     output::Position {
                                         x: pos_x_cursor,
                                         y: max_output_height
-                                            .sub(output.mode.height)
+                                            .sub(mode.height)
                                             .end()
                                             .expect("always positive, as max_height >= height"),
                                     }
@@ -329,7 +360,7 @@ impl<'ws, 'out> Workstation<'out> {
                             });
 
                             // advance cursor to the right
-                            pos_x_cursor.add(output::PosX(output.mode.width.into_inner()));
+                            pos_x_cursor.add(output::PosX(mode.width.into_inner()));
                             out
                         })
                         .collect();
@@ -353,12 +384,20 @@ impl<'ws, 'out> Workstation<'out> {
                         .into_iter()
                         .chain(iter::once(&laptop))
                         .map(|output| {
-                            let out = output.set(OutputActiveState::On {
+                            let mode = match output.state {
+                                OutputState::Active {
+                                    position: _,
+                                    ref mode,
+                                } => mode,
+                                OutputState::Inactive { ref preferred_mode } => preferred_mode,
+                            };
+                            let out = output.set(OutputState::Active {
+                                mode: mode.clone(),
                                 position: {
                                     output::Position {
                                         x: pos_x_cursor,
                                         y: max_output_height
-                                            .sub(output.mode.height)
+                                            .sub(mode.height)
                                             .end()
                                             .expect("always positive, as max_height >= height"),
                                     }
@@ -366,7 +405,7 @@ impl<'ws, 'out> Workstation<'out> {
                             });
 
                             // advance cursor to the right
-                            pos_x_cursor.add(output::PosX(output.mode.width.into_inner()));
+                            pos_x_cursor.add(output::PosX(mode.width.into_inner()));
                             out
                         })
                         .collect();
@@ -405,14 +444,26 @@ impl<'ws, 'out> Workstation<'out> {
         setup: Setup,
     ) -> Plan<'ws, 'out> {
         let output_settings = {
-            let mut outputs = vec![laptop.set(OutputActiveState::On {
+            let mode = match laptop.state {
+                OutputState::Active {
+                    position: _,
+                    ref mode,
+                } => mode,
+                OutputState::Inactive { ref preferred_mode } => preferred_mode,
+            };
+            let mut outputs = vec![laptop.set(OutputState::Active {
+                mode: mode.clone(),
                 position: output::Position::null(),
             })];
             outputs.append(&mut match monitors {
                 None => vec![],
                 Some(monitors) => monitors
                     .iter()
-                    .map(|ext| ext.set(OutputActiveState::Off))
+                    .map(|ext| {
+                        ext.set(OutputState::Inactive {
+                            preferred_mode: mode.clone(),
+                        })
+                    })
                     .collect(),
             });
             outputs
@@ -455,24 +506,42 @@ impl<'ws, 'out> Workstation<'out> {
                 let mut outputs: Vec<_> = monitors
                     .iter()
                     .map(|output| {
-                        let out = output.set(OutputActiveState::On {
+                        let mode = match output.state {
+                            OutputState::Active {
+                                position: _,
+                                ref mode,
+                            } => mode,
+                            OutputState::Inactive { ref preferred_mode } => preferred_mode,
+                        };
+
+                        let out = output.set(OutputState::Active {
+                            mode: mode.clone(),
                             position: output::Position {
                                 x: pos_x_cursor,
                                 y: max_output_height
-                                    .sub(output.mode.height)
+                                    .sub(mode.height)
                                     .end()
                                     .expect("always positive, as max_height >= height"),
                             },
                         });
 
                         // advance cursor to the right
-                        pos_x_cursor.add(output::PosX(output.mode.width.into_inner()));
+                        pos_x_cursor.add(output::PosX(mode.width.into_inner()));
                         out
                     })
                     .collect();
 
                 if let Some(laptop) = laptop {
-                    outputs.push(laptop.set(OutputActiveState::Off));
+                    let mode = match laptop.state {
+                        OutputState::Active {
+                            position: _,
+                            ref mode,
+                        } => mode,
+                        OutputState::Inactive { ref preferred_mode } => preferred_mode,
+                    };
+                    outputs.push(laptop.set(OutputState::Inactive {
+                        preferred_mode: mode.clone(),
+                    }));
                 }
                 outputs
             },
@@ -534,15 +603,31 @@ impl<'ws, 'out> Workstation<'out> {
             });
         }
 
-        let mut output_settings = vec![monitor.set(OutputActiveState::On {
+        let monitor_mode = match monitor.state {
+            OutputState::Active {
+                position: _,
+                ref mode,
+            } => mode,
+            OutputState::Inactive { ref preferred_mode } => preferred_mode,
+        };
+        let mut output_settings = vec![monitor.set(OutputState::Active {
+            mode: monitor_mode.clone(),
             position: output::Position::null(),
         })];
 
         // put laptop below projector output, aligned left
-        output_settings.push(laptop.set(OutputActiveState::On {
+        let laptop_mode = match laptop.state {
+            OutputState::Active {
+                position: _,
+                ref mode,
+            } => mode,
+            OutputState::Inactive { ref preferred_mode } => preferred_mode,
+        };
+        output_settings.push(laptop.set(OutputState::Active {
+            mode: laptop_mode.clone(),
             position: output::Position {
                 x: output::PosX(0),
-                y: output::PosY(monitor.mode.height.into_inner()),
+                y: output::PosY(monitor_mode.height.into_inner()),
             },
         }));
 

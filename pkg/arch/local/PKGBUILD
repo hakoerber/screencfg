@@ -35,7 +35,7 @@ check() {
   cd "../../../.."
   pwd
   export RUSTUP_TOOLCHAIN=stable
-  cargo test --frozen
+  cargo test --frozen --features=testing
 }
 
 package() {

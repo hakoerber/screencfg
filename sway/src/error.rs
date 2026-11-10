@@ -54,4 +54,8 @@ pub enum Error {
     OutputNameValidation(#[from] OutputNameError),
     #[error("workspace name validation failed: {0}")]
     WorkspaceNameValidation(#[from] WorkspaceNameError),
+    #[error("missing value for active output")]
+    MissingValueForActiveOutput,
+    #[error("no modes found for output")]
+    NoModesForOutput,
 }
