@@ -18,8 +18,8 @@ use self::{
     error::Error,
     ordering::MonitorOrdering,
     output::{
-        ActiveState as OutputActiveState, Class as OutputClass, Name as OutputName, Output,
-        Setting as OutputSetting,
+        Class as OutputClass, Name as OutputName, Output, Setting as OutputSetting,
+        State as OutputState,
     },
     plan::Plan,
     workspace::Setting as WorkspaceSetting,
@@ -224,7 +224,7 @@ async fn run() -> Result<(), Error> {
                         Ok(()) => (),
                         Err(err) => match err {
                             Error::WorkstationWithoutScreens => {
-                                eprintln!("no screens found, skipping setup")
+                                eprintln!("no screens found, skipping setup");
                                 // It can happen that all screens are disconnected. in that case, we do *not* fail hard,
                                 // but just do nothing. If a screen is connected again, we can handle it.
                             }

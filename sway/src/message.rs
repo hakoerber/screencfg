@@ -3,9 +3,8 @@ use std::{borrow::Cow, fmt};
 use serde::Deserialize;
 
 use super::{
-    Connection, Error, EventType, Height, Output, OutputMode, OutputName, OutputNameError,
-    OutputNameRef, Outputs, RefreshRate, Version, Width, Workspace, WorkspaceName, WorkspaceNumber,
-    Workspaces,
+    Connection, Error, EventType, Height, Output, OutputMode, OutputName, OutputNameRef, Outputs,
+    RefreshRate, Version, Width, Workspace, WorkspaceName, WorkspaceNumber, Workspaces,
 };
 
 // Sic, sway resuses the i3 magic string for compatibility
@@ -29,11 +28,19 @@ pub struct Position {
 #[derive(Debug)]
 #[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
 pub enum OutputState {
-    Enabled {
+    Active {
         position: Position,
-        refresh_rate: RefreshRate,
+        mode: OutputMode,
     },
-    Disabled,
+    Inactive {
+        preferred_mode: OutputMode,
+    },
+}
+
+impl OutputState {
+    pub fn active(&self) -> bool {
+        matches!(self, Self::Active { .. })
+    }
 }
 
 #[derive(Debug)]
@@ -128,15 +135,17 @@ impl From<&Command<'_>> for Cow<'static, str> {
                 ref output_name,
                 ref state,
             } => match *state {
-                OutputState::Enabled {
+                OutputState::Active {
                     ref position,
-                    refresh_rate: ref _refresh_rate,
+                    mode: ref _mode,
                 } => Cow::from(format!(
                     "output \"{output_name}\" position {x} {y}",
                     x = position.x,
                     y = position.y,
                 )),
-                OutputState::Disabled => Cow::from(format!("output \"{output_name}\" disable")),
+                OutputState::Inactive { .. } => {
+                    Cow::from(format!("output \"{output_name}\" disable"))
+                }
             },
         }
     }
@@ -152,8 +161,9 @@ pub(crate) struct OutputRectPayload {
 pub(crate) struct OutputPayload {
     name: String,
     active: bool,
-    current_mode: OutputModePayload,
-    rect: OutputRectPayload,
+    current_mode: Option<OutputModePayload>,
+    modes: Vec<OutputModePayload>,
+    rect: Option<OutputRectPayload>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -164,27 +174,44 @@ pub(crate) struct OutputModePayload {
 }
 
 impl TryFrom<OutputPayload> for Output {
-    type Error = OutputNameError;
+    type Error = Error;
 
     fn try_from(value: OutputPayload) -> Result<Self, Self::Error> {
         Ok(Self {
             name: OutputName::try_new(value.name)?,
-            active: value.active,
-            mode: OutputMode {
-                width: Width::new(value.current_mode.width),
-                height: Height::new(value.current_mode.height),
-                refresh_rate: RefreshRate::Ms(value.current_mode.refresh),
-            },
-            position: Position {
-                x: PosX(value.rect.x),
-                y: PosY(value.rect.y),
+            state: if value.active {
+                let mode = value
+                    .current_mode
+                    .ok_or(Error::MissingValueForActiveOutput)?;
+                let rect = value.rect.ok_or(Error::MissingValueForActiveOutput)?;
+                OutputState::Active {
+                    mode: OutputMode {
+                        width: Width(mode.width),
+                        height: Height(mode.height),
+                        refresh_rate: RefreshRate::Ms(mode.refresh),
+                    },
+                    position: Position {
+                        x: PosX(rect.x),
+                        y: PosY(rect.y),
+                    },
+                }
+            } else {
+                // assume that the first element is the preferred mode. not sure whether this is correct.
+                let preferred_mode = value.modes.first().ok_or(Error::NoModesForOutput)?;
+                OutputState::Inactive {
+                    preferred_mode: OutputMode {
+                        width: Width(preferred_mode.width),
+                        height: Height(preferred_mode.height),
+                        refresh_rate: RefreshRate::Ms(preferred_mode.refresh),
+                    },
+                }
             },
         })
     }
 }
 
 impl TryFrom<Vec<OutputPayload>> for Outputs {
-    type Error = OutputNameError;
+    type Error = Error;
 
     fn try_from(value: Vec<OutputPayload>) -> Result<Self, Self::Error> {
         Ok(Self(
@@ -192,7 +219,7 @@ impl TryFrom<Vec<OutputPayload>> for Outputs {
                 .into_iter()
                 .filter(|output| output.name != "xroot-0")
                 .map(OutputPayload::try_into)
-                .collect::<Result<_, OutputNameError>>()?,
+                .collect::<Result<_, Error>>()?,
         ))
     }
 }

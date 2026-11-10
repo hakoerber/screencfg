@@ -52,60 +52,66 @@ impl Conn for MockConnection {
     }
 
     async fn outputs(&mut self) -> Result<Outputs, Error> {
+        use super::OutputState;
+
         self.check_fail()?;
         match self.setting {
             MockSetting::LaptopOnly => Ok(Outputs(vec![Output {
                 name: OutputName::try_new("eDP-1".to_owned()).unwrap(),
-                mode: OutputMode {
-                    width: Width::new(1920),
-                    height: Height::new(1080),
-                    refresh_rate: RefreshRate::Ms(144),
-                },
-                active: true,
-                position: Position {
-                    x: PosX(0),
-                    y: PosY(0),
-                },
-            }])),
-            MockSetting::MonitorOnly(num) => match num {
-                1 => Ok(Outputs(vec![Output {
-                    name: OutputName::try_new("DP-1".to_owned()).unwrap(),
+                state: OutputState::Active {
+                    position: Position {
+                        x: PosX(0),
+                        y: PosY(0),
+                    },
                     mode: OutputMode {
                         width: Width::new(1920),
                         height: Height::new(1080),
                         refresh_rate: RefreshRate::Ms(144),
                     },
-                    active: true,
-                    position: Position {
-                        x: PosX(0),
-                        y: PosY(0),
-                    },
-                }])),
-                2 => Ok(Outputs(vec![
-                    Output {
-                        name: OutputName::try_new("DP-1".to_owned()).unwrap(),
+                },
+            }])),
+            MockSetting::MonitorOnly(num) => match num {
+                1 => Ok(Outputs(vec![Output {
+                    name: OutputName::try_new("DP-1".to_owned()).unwrap(),
+                    state: OutputState::Active {
+                        position: Position {
+                            x: PosX(0),
+                            y: PosY(0),
+                        },
                         mode: OutputMode {
                             width: Width::new(1920),
                             height: Height::new(1080),
                             refresh_rate: RefreshRate::Ms(144),
                         },
-                        active: true,
-                        position: Position {
-                            x: PosX(0),
-                            y: PosY(0),
+                    },
+                }])),
+                2 => Ok(Outputs(vec![
+                    Output {
+                        name: OutputName::try_new("DP-1".to_owned()).unwrap(),
+                        state: OutputState::Active {
+                            position: Position {
+                                x: PosX(0),
+                                y: PosY(0),
+                            },
+                            mode: OutputMode {
+                                width: Width::new(1920),
+                                height: Height::new(1080),
+                                refresh_rate: RefreshRate::Ms(144),
+                            },
                         },
                     },
                     Output {
                         name: OutputName::try_new("DP-2".to_owned()).unwrap(),
-                        mode: OutputMode {
-                            width: Width::new(1024),
-                            height: Height::new(800),
-                            refresh_rate: RefreshRate::Ms(144),
-                        },
-                        active: true,
-                        position: Position {
-                            x: PosX(0),
-                            y: PosY(0),
+                        state: OutputState::Active {
+                            position: Position {
+                                x: PosX(0),
+                                y: PosY(0),
+                            },
+                            mode: OutputMode {
+                                width: Width::new(1024),
+                                height: Height::new(800),
+                                refresh_rate: RefreshRate::Ms(144),
+                            },
                         },
                     },
                 ])),
@@ -115,41 +121,44 @@ impl Conn for MockConnection {
             MockSetting::Mixed => Ok(Outputs(vec![
                 Output {
                     name: OutputName::try_new("eDP-1".to_owned()).unwrap(),
-                    mode: OutputMode {
-                        width: Width::new(1920),
-                        height: Height::new(1080),
-                        refresh_rate: RefreshRate::Ms(144),
-                    },
-                    active: true,
-                    position: Position {
-                        x: PosX(0),
-                        y: PosY(0),
+                    state: OutputState::Active {
+                        position: Position {
+                            x: PosX(0),
+                            y: PosY(0),
+                        },
+                        mode: OutputMode {
+                            width: Width::new(1920),
+                            height: Height::new(1080),
+                            refresh_rate: RefreshRate::Ms(144),
+                        },
                     },
                 },
                 Output {
                     name: OutputName::try_new("HDMI-1".to_owned()).unwrap(),
-                    mode: OutputMode {
-                        width: Width::new(2560),
-                        height: Height::new(1440),
-                        refresh_rate: RefreshRate::Ms(144),
-                    },
-                    active: true,
-                    position: Position {
-                        x: PosX(0),
-                        y: PosY(0),
+                    state: OutputState::Active {
+                        position: Position {
+                            x: PosX(0),
+                            y: PosY(0),
+                        },
+                        mode: OutputMode {
+                            width: Width::new(2560),
+                            height: Height::new(1440),
+                            refresh_rate: RefreshRate::Ms(144),
+                        },
                     },
                 },
                 Output {
                     name: OutputName::try_new("DP-1".to_owned()).unwrap(),
-                    mode: OutputMode {
-                        width: Width::new(1024),
-                        height: Height::new(800),
-                        refresh_rate: RefreshRate::Ms(60),
-                    },
-                    active: true,
-                    position: Position {
-                        x: PosX(0),
-                        y: PosY(0),
+                    state: OutputState::Active {
+                        position: Position {
+                            x: PosX(0),
+                            y: PosY(0),
+                        },
+                        mode: OutputMode {
+                            width: Width::new(1024),
+                            height: Height::new(800),
+                            refresh_rate: RefreshRate::Ms(144),
+                        },
                     },
                 },
             ])),

@@ -28,6 +28,12 @@ impl From<sway::Width> for Width {
     }
 }
 
+impl From<Width> for sway::Width {
+    fn from(value: Width) -> Self {
+        Self::new(value.into_inner())
+    }
+}
+
 #[nutype(derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq))]
 pub(crate) struct Height(usize);
 
@@ -46,8 +52,13 @@ impl From<sway::Height> for Height {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+impl From<Height> for sway::Height {
+    fn from(value: Height) -> Self {
+        Self::new(value.into_inner())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum RefreshRate {
     Ms(usize),
 }
@@ -68,8 +79,7 @@ impl From<RefreshRate> for sway::RefreshRate {
     }
 }
 
-#[derive(Debug)]
-#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Mode {
     pub(crate) width: Width,
     pub(crate) height: Height,
@@ -86,13 +96,22 @@ impl From<sway::OutputMode> for Mode {
     }
 }
 
+impl From<Mode> for sway::OutputMode {
+    fn from(value: Mode) -> Self {
+        Self {
+            width: value.width.into(),
+            height: value.height.into(),
+            refresh_rate: value.refresh_rate.into(),
+        }
+    }
+}
+
 #[derive(Debug)]
 #[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
 pub(crate) struct Output {
     pub(crate) class: Class,
     pub(crate) name: Name,
-    pub(crate) mode: Mode,
-    pub(crate) state: ActiveState,
+    pub(crate) state: State,
 }
 
 impl fmt::Display for Output {
@@ -109,23 +128,14 @@ impl TryFrom<sway::Output> for Output {
 
         let class = Class::try_detect(&name)?;
 
-        Ok(Self {
-            name,
-            class,
-            mode: value.mode.into(),
-            state: if value.active {
-                ActiveState::On {
-                    position: value.position.into(),
-                }
-            } else {
-                ActiveState::Off
-            },
-        })
+        let state = value.state.into();
+
+        Ok(Self { class, name, state })
     }
 }
 
 impl<'out> Output {
-    pub(crate) fn set(&'out self, state: ActiveState) -> Setting<'out> {
+    pub(crate) fn set(&'out self, state: State) -> Setting<'out> {
         if self.state == state {
             Setting::Unchanged { output: self }
         } else {
@@ -140,7 +150,7 @@ impl<'out> Output {
         sway.outputs()
             .await?
             .into_iter()
-            .filter(|output| output.active)
+            .filter(|output| output.state.active())
             .map(TryInto::try_into)
             .collect::<Result<Vec<Self>, Error>>()
     }
@@ -220,23 +230,37 @@ impl<'a> From<&'a Name> for sway::OutputNameRef<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum ActiveState {
-    On { position: Position },
-    Off,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum State {
+    Active { position: Position, mode: Mode },
+    Inactive { preferred_mode: Mode },
 }
 
-impl ActiveState {
+impl State {
     pub(crate) fn is_active(&self) -> bool {
-        matches!(self, Self::On { position: _ })
+        matches!(self, Self::Active { .. })
     }
 }
 
-impl fmt::Display for ActiveState {
+impl From<sway::OutputState> for State {
+    fn from(value: sway::OutputState) -> Self {
+        match value {
+            sway::OutputState::Active { position, mode } => Self::Active {
+                position: position.into(),
+                mode: mode.into(),
+            },
+            sway::OutputState::Inactive { preferred_mode } => Self::Inactive {
+                preferred_mode: preferred_mode.into(),
+            },
+        }
+    }
+}
+
+impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::On { position } => write!(f, "on at {position}"),
-            Self::Off => write!(f, "off"),
+            Self::Active { position, mode: _ } => write!(f, "on at {position}"),
+            Self::Inactive { .. } => write!(f, "off"),
         }
     }
 }
@@ -319,13 +343,8 @@ impl From<sway::Position> for Position {
 #[derive(Debug)]
 #[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
 pub(crate) enum Setting<'out> {
-    Unchanged {
-        output: &'out Output,
-    },
-    Change {
-        output: &'out Output,
-        state: ActiveState,
-    },
+    Unchanged { output: &'out Output },
+    Change { output: &'out Output, state: State },
 }
 
 impl Setting<'_> {

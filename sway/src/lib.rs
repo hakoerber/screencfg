@@ -46,11 +46,33 @@ pub struct OutputName(String);
 )]
 pub struct OutputNameRef<'a>(&'a String);
 
-#[nutype(derive(Debug))]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+#[derive(Debug)]
 pub struct Width(usize);
 
-#[nutype(derive(Debug))]
+impl Width {
+    pub fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    pub fn into_inner(&self) -> usize {
+        self.0
+    }
+}
+
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
+#[derive(Debug)]
 pub struct Height(usize);
+
+impl Height {
+    pub fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    pub fn into_inner(&self) -> usize {
+        self.0
+    }
+}
 
 #[derive(Debug)]
 #[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
@@ -59,6 +81,7 @@ pub enum RefreshRate {
 }
 
 #[derive(Debug)]
+#[cfg_attr(any(test, feature = "testing"), derive(Eq, PartialEq))]
 pub struct OutputMode {
     pub width: Width,
     pub height: Height,
@@ -116,15 +139,13 @@ pub async fn connect(socket_path: &SocketPath) -> Result<Connection, Error> {
 #[derive(Debug)]
 pub struct Output {
     pub name: OutputName,
-    pub mode: OutputMode,
-    pub position: Position,
-    pub active: bool,
+    pub state: OutputState,
 }
 
 impl fmt::Display for Output {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)?;
-        if self.active {
+        if self.state.active() {
             write!(f, " [active]")?;
         }
         Ok(())

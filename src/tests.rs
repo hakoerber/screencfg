@@ -14,9 +14,9 @@ use super::{
     error::Error,
     ordering::MonitorOrdering,
     output::{
-        ActiveState as OutputActiveState, Class as OutputClass, Height as OutputHeight,
-        Mode as OutputMode, Name as OutputName, Output, PosX, PosY, Position as OutputPosition,
-        RefreshRate as OutputRefreshRate, Width as OutputWidth,
+        Class as OutputClass, Height as OutputHeight, Mode as OutputMode, Name as OutputName,
+        Output, PosX, PosY, Position as OutputPosition, RefreshRate as OutputRefreshRate,
+        State as OutputState, Width as OutputWidth,
     },
     plan::Plan,
     workspace::{Name as WorkspaceName, Number as WorkspaceNumber, Workspace, Workspaces},
@@ -79,8 +79,13 @@ async fn single_laptop() -> Result<(), Error> {
             Setup::LaptopOnly,
             PlanExpect::Valid {
                 plan: Plan {
-                    output_settings: vec![outputs[0].set(OutputActiveState::On {
+                    output_settings: vec![outputs[0].set(OutputState::Active {
                         position: OutputPosition::null(),
+                        mode: OutputMode {
+                            width: OutputWidth::new(1920),
+                            height: OutputHeight::new(1080),
+                            refresh_rate: OutputRefreshRate::Ms(144),
+                        },
                     })],
                     workspace_settings: vec![
                         WorkspaceSetting::Unchanged {
@@ -134,32 +139,32 @@ async fn single_laptop() -> Result<(), Error> {
 fn multiple_laptops() {
     let laptop1 = Output {
         name: OutputName::try_new("eDP-1".to_owned()).unwrap(),
-        mode: OutputMode {
-            width: OutputWidth::new(1920),
-            height: OutputHeight::new(0),
-            refresh_rate: OutputRefreshRate::Ms(144),
-        },
         class: OutputClass::Laptop,
-        state: OutputActiveState::On {
+        state: OutputState::Active {
             position: OutputPosition {
                 x: PosX(0),
                 y: PosY(0),
+            },
+            mode: OutputMode {
+                width: OutputWidth::new(1920),
+                height: OutputHeight::new(0),
+                refresh_rate: OutputRefreshRate::Ms(144),
             },
         },
     };
 
     let laptop2 = Output {
         name: OutputName::try_new("eDP-2".to_owned()).unwrap(),
-        mode: OutputMode {
-            width: OutputWidth::new(1920),
-            height: OutputHeight::new(0),
-            refresh_rate: OutputRefreshRate::Ms(144),
-        },
         class: OutputClass::Laptop,
-        state: OutputActiveState::On {
+        state: OutputState::Active {
             position: OutputPosition {
                 x: PosX(0),
                 y: PosY(0),
+            },
+            mode: OutputMode {
+                width: OutputWidth::new(1920),
+                height: OutputHeight::new(0),
+                refresh_rate: OutputRefreshRate::Ms(144),
             },
         },
     };
@@ -216,8 +221,13 @@ async fn single_monitor() -> Result<(), Error> {
             Setup::MonitorOnly,
             PlanExpect::Valid {
                 plan: Plan {
-                    output_settings: vec![outputs[0].set(OutputActiveState::On {
+                    output_settings: vec![outputs[0].set(OutputState::Active {
                         position: OutputPosition::null(),
+                        mode: OutputMode {
+                            width: OutputWidth::new(1920),
+                            height: OutputHeight::new(1080),
+                            refresh_rate: OutputRefreshRate::Ms(144),
+                        },
                     })],
                     workspace_settings: vec![
                         WorkspaceSetting::Unchanged {
@@ -307,13 +317,23 @@ async fn multiple_monitor() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        outputs[0].set(OutputActiveState::On {
+                        outputs[0].set(OutputState::Active {
                             position: OutputPosition::null(),
+                            mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        outputs[1].set(OutputActiveState::On {
+                        outputs[1].set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(1920),
                                 y: PosY(1080 - 800),
+                            },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1024),
+                                height: OutputHeight::new(800),
+                                refresh_rate: OutputRefreshRate::Ms(144),
                             },
                         }),
                     ],
@@ -399,16 +419,26 @@ async fn multiple_monitor_with_custom_order() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        outputs[1].set(OutputActiveState::On {
+                        outputs[1].set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(0),
                                 y: PosY(1080 - 800),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1024),
+                                height: OutputHeight::new(800),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        outputs[0].set(OutputActiveState::On {
+                        outputs[0].set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(1024),
                                 y: PosY(0),
+                            },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
                             },
                         }),
                     ],
@@ -519,22 +549,37 @@ async fn mixture() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        laptop.set(OutputActiveState::On {
+                        laptop.set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(0),
                                 y: PosY(1440 - 1080),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(0).unwrap().set(OutputActiveState::On {
+                        monitors.get(0).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(1920),
                                 y: PosY(1440 - 800),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1024),
+                                height: OutputHeight::new(800),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(1).unwrap().set(OutputActiveState::On {
+                        monitors.get(1).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(1920 + 1024),
                                 y: PosY(0),
+                            },
+                            mode: OutputMode {
+                                width: OutputWidth::new(2560),
+                                height: OutputHeight::new(1440),
+                                refresh_rate: OutputRefreshRate::Ms(144),
                             },
                         }),
                     ],
@@ -581,22 +626,37 @@ async fn mixture() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        monitors.get(0).unwrap().set(OutputActiveState::On {
+                        monitors.get(0).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(0),
                                 y: PosY(1440 - 800),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1024),
+                                height: OutputHeight::new(800),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(1).unwrap().set(OutputActiveState::On {
+                        monitors.get(1).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(1024),
                                 y: PosY(0),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(2560),
+                                height: OutputHeight::new(1440),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        laptop.set(OutputActiveState::On {
+                        laptop.set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(1024 + 2560),
                                 y: PosY(1440 - 1080),
+                            },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
                             },
                         }),
                     ],
@@ -643,14 +703,31 @@ async fn mixture() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        laptop.set(OutputActiveState::On {
+                        laptop.set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(0),
                                 y: PosY(0),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(0).unwrap().set(OutputActiveState::Off),
-                        monitors.get(1).unwrap().set(OutputActiveState::Off),
+                        monitors.get(0).unwrap().set(OutputState::Inactive {
+                            preferred_mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
+                        }),
+                        monitors.get(1).unwrap().set(OutputState::Inactive {
+                            preferred_mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
+                        }),
                     ],
                     workspace_settings: vec![
                         WorkspaceSetting::Unchanged {
@@ -693,19 +770,35 @@ async fn mixture() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        monitors.get(0).unwrap().set(OutputActiveState::On {
+                        monitors.get(0).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(0),
                                 y: PosY(1440 - 800),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1024),
+                                height: OutputHeight::new(800),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(1).unwrap().set(OutputActiveState::On {
+                        monitors.get(1).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(1024),
                                 y: PosY(0),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(2560),
+                                height: OutputHeight::new(1440),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        laptop.set(OutputActiveState::Off),
+                        laptop.set(OutputState::Inactive {
+                            preferred_mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
+                        }),
                     ],
                     workspace_settings: vec![
                         WorkspaceSetting::Change {
@@ -814,22 +907,37 @@ async fn mixture_with_custom_order() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        laptop.set(OutputActiveState::On {
+                        laptop.set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(0),
                                 y: PosY(1440 - 1080),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(0).unwrap().set(OutputActiveState::On {
+                        monitors.get(0).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(1920),
                                 y: PosY(0),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(2560),
+                                height: OutputHeight::new(1440),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(1).unwrap().set(OutputActiveState::On {
+                        monitors.get(1).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(1920 + 2560),
                                 y: PosY(1440 - 800),
+                            },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1024),
+                                height: OutputHeight::new(800),
+                                refresh_rate: OutputRefreshRate::Ms(144),
                             },
                         }),
                     ],
@@ -875,22 +983,37 @@ async fn mixture_with_custom_order() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        monitors.get(0).unwrap().set(OutputActiveState::On {
+                        monitors.get(0).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(0),
                                 y: PosY(0),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(2560),
+                                height: OutputHeight::new(1440),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(1).unwrap().set(OutputActiveState::On {
+                        monitors.get(1).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(2560),
                                 y: PosY(1440 - 800),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1024),
+                                height: OutputHeight::new(800),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        laptop.set(OutputActiveState::On {
+                        laptop.set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(2560 + 1024),
                                 y: PosY(1440 - 1080),
+                            },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
                             },
                         }),
                     ],
@@ -936,14 +1059,31 @@ async fn mixture_with_custom_order() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        laptop.set(OutputActiveState::On {
+                        laptop.set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(0),
                                 y: PosY(0),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(0).unwrap().set(OutputActiveState::Off),
-                        monitors.get(1).unwrap().set(OutputActiveState::Off),
+                        monitors.get(0).unwrap().set(OutputState::Inactive {
+                            preferred_mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
+                        }),
+                        monitors.get(1).unwrap().set(OutputState::Inactive {
+                            preferred_mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
+                        }),
                     ],
                     workspace_settings: vec![
                         WorkspaceSetting::Unchanged {
@@ -986,19 +1126,35 @@ async fn mixture_with_custom_order() -> Result<(), Error> {
             PlanExpect::Valid {
                 plan: Plan {
                     output_settings: vec![
-                        monitors.get(0).unwrap().set(OutputActiveState::On {
+                        monitors.get(0).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(0),
                                 y: PosY(0),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(2560),
+                                height: OutputHeight::new(1440),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        monitors.get(1).unwrap().set(OutputActiveState::On {
+                        monitors.get(1).unwrap().set(OutputState::Active {
                             position: OutputPosition {
                                 x: PosX(2560),
                                 y: PosY(1440 - 800),
                             },
+                            mode: OutputMode {
+                                width: OutputWidth::new(1024),
+                                height: OutputHeight::new(800),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
                         }),
-                        laptop.set(OutputActiveState::Off),
+                        laptop.set(OutputState::Inactive {
+                            preferred_mode: OutputMode {
+                                width: OutputWidth::new(1920),
+                                height: OutputHeight::new(1080),
+                                refresh_rate: OutputRefreshRate::Ms(144),
+                            },
+                        }),
                     ],
                     workspace_settings: vec![
                         WorkspaceSetting::Change {
