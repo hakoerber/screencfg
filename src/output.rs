@@ -148,7 +148,6 @@ impl<'out> Output {
         sway.outputs()
             .await?
             .into_iter()
-            .filter(|output| output.state.active())
             .map(TryInto::try_into)
             .collect::<Result<Vec<Self>, Error>>()
     }
