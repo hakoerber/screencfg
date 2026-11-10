@@ -88,6 +88,7 @@ pub(crate) enum Command<'out> {
     },
     MoveWorkspace {
         num: WorkspaceNumber,
+        from: &'out Output,
         output: &'out Output,
     },
 }
@@ -96,10 +97,18 @@ impl fmt::Display for Command<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::SetOutputState { output, ref state } => {
-                write!(f, "setting output {output} to {state}")
+                write!(
+                    f,
+                    "setting output {output} to {state} (currently {current_state})",
+                    current_state = output.state
+                )
             }
-            Self::MoveWorkspace { num, output } => {
-                write!(f, "move workspace {num} to {}", output.name)
+            Self::MoveWorkspace { num, from, output } => {
+                write!(
+                    f,
+                    "move workspace {num} to {} (currently on {})",
+                    output.name, from.name
+                )
             }
         }
     }
@@ -171,10 +180,7 @@ impl<'out> Plan<'_, 'out> {
         for setting in &self.output_settings {
             match *setting {
                 OutputSetting::Unchanged { output: _ } => (),
-                OutputSetting::Change {
-                    output,
-                    ref state,
-                } => {
+                OutputSetting::Change { output, ref state } => {
                     commands.push(Command::SetOutputState {
                         output,
                         state: state.clone(),
@@ -197,6 +203,7 @@ impl<'out> Plan<'_, 'out> {
 
                     commands.push(Command::MoveWorkspace {
                         num: workspace.num,
+                        from: from,
                         output: to,
                     });
                 }
@@ -234,7 +241,11 @@ impl<'out> Plan<'_, 'out> {
                 Command::SetOutputState { output, state } => {
                     Either::A(SetOutputState { output, state })
                 }
-                Command::MoveWorkspace { num, output } => Either::B(MoveWorkspace { num, output }),
+                Command::MoveWorkspace {
+                    num,
+                    output,
+                    from: _,
+                } => Either::B(MoveWorkspace { num, output }),
             })
             .fold(
                 (Vec::new(), Vec::new()),
