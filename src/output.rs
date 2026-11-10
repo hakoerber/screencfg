@@ -2,8 +2,6 @@ use std::{borrow::Borrow as _, fmt};
 
 use nutype::nutype;
 
-use sway::Conn as _;
-
 use super::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -146,7 +144,7 @@ impl<'out> Output {
         }
     }
 
-    pub(crate) async fn findall(sway: &mut sway::Connection) -> Result<Vec<Self>, Error> {
+    pub(crate) async fn findall(sway: &mut impl sway::Conn) -> Result<Vec<Self>, Error> {
         sway.outputs()
             .await?
             .into_iter()

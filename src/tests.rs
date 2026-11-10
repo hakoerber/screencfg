@@ -3,7 +3,6 @@
 use std::sync::Once;
 
 use pretty_assertions::assert_eq;
-use tap::Tap as _;
 use tracing::Level;
 
 use nonempty::NonEmptyVec;
@@ -49,13 +48,7 @@ async fn single_laptop() -> Result<(), Error> {
         setting: sway::tests::MockSetting::LaptopOnly,
     };
 
-    let outputs = connection
-        .outputs()
-        .await?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect::<Result<Vec<Output>, Error>>()?
-        .tap_mut(|outputs| outputs.sort_by_key(|output| output.name.as_str().to_owned()));
+    let outputs = Output::findall(&mut connection).await?;
 
     let workspaces = Workspaces::convert(
         connection.workspaces().await?,
@@ -190,13 +183,7 @@ async fn single_monitor() -> Result<(), Error> {
         setting: sway::tests::MockSetting::MonitorOnly(1),
     };
 
-    let outputs = connection
-        .outputs()
-        .await?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect::<Result<Vec<Output>, Error>>()?
-        .tap_mut(|outputs| outputs.sort_by_key(|output| output.name.as_str().to_owned()));
+    let outputs = Output::findall(&mut connection).await?;
 
     let workspaces = Workspaces::convert(
         connection.workspaces().await?,
@@ -285,13 +272,7 @@ async fn multiple_monitor() -> Result<(), Error> {
         setting: sway::tests::MockSetting::MonitorOnly(2),
     };
 
-    let outputs = connection
-        .outputs()
-        .await?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect::<Result<Vec<Output>, Error>>()?
-        .tap_mut(|outputs| outputs.sort_by_key(|output| output.name.as_str().to_owned()));
+    let outputs = Output::findall(&mut connection).await?;
 
     let workspaces = Workspaces::convert(
         connection.workspaces().await?,
@@ -394,13 +375,7 @@ async fn multiple_monitor_with_custom_order() -> Result<(), Error> {
         setting: sway::tests::MockSetting::MonitorOnly(2),
     };
 
-    let outputs = connection
-        .outputs()
-        .await?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect::<Result<Vec<Output>, Error>>()?
-        .tap_mut(|outputs| outputs.sort_by_key(|output| output.name.as_str().to_owned()));
+    let outputs = Output::findall(&mut connection).await?;
 
     let workspaces = Workspaces::convert(
         connection.workspaces().await?,
