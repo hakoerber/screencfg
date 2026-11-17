@@ -227,23 +227,14 @@ async fn run() -> Result<(), Error> {
 
             setter().await?;
 
-            let subscription = subscribe_connection
-                .subscribe(&[EventType::Output, EventType::Workspace])
-                .await?;
+            let subscription = subscribe_connection.subscribe(&[EventType::Output]).await?;
 
             let Err(err) = subscription
                 .start_event_listener::<_, Error>(Duration::from_millis(2000), async |event| {
                     eprintln!("received event from sway: {event}");
                     match event {
                         sway::EventPayload::Output => setter().await?,
-                        sway::EventPayload::Workspace(payload) => match payload.change {
-                            sway::EventPayloadWorkspaceType::Init => setter().await?,
-                            sway::EventPayloadWorkspaceType::Empty
-                            | sway::EventPayloadWorkspaceType::Focus
-                            | sway::EventPayloadWorkspaceType::Move
-                            | sway::EventPayloadWorkspaceType::Rename
-                            | sway::EventPayloadWorkspaceType::Urgent => (),
-                        },
+                        sway::EventPayload::Workspace(_payload) => (),
                         sway::EventPayload::Reload => (),
                     }
 
