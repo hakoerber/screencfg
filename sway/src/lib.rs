@@ -22,8 +22,10 @@ mod subscribe;
 
 pub use connection::{Conn, Connection};
 pub use error::Error;
-pub use message::{Command, OutputState, PosX, PosY, Position};
-pub(crate) use message::{EventPayload, Message, Response, ResponseType};
+pub use message::{
+    Command, EventPayload, EventPayloadWorkspaceType, OutputState, PosX, PosY, Position,
+};
+pub(crate) use message::{Message, Response, ResponseType};
 pub(crate) use subscribe::Subscribe;
 pub use subscribe::{Subscription, TaskResult};
 use tokio::{io, net};

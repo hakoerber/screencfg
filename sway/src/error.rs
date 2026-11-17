@@ -58,4 +58,6 @@ pub enum Error {
     MissingValueForActiveOutput,
     #[error("no modes found for output")]
     NoModesForOutput,
+    #[error("received workspace event without current object")]
+    WorkspaceEventWithoutCurrent,
 }
