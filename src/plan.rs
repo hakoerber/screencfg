@@ -203,7 +203,7 @@ impl<'out> Plan<'_, 'out> {
 
                     commands.push(Command::MoveWorkspace {
                         num: workspace.num,
-                        from: from,
+                        from,
                         output: to,
                     });
                 }
