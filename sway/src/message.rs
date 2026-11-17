@@ -285,13 +285,84 @@ pub(crate) struct CommandPayload {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "lowercase")]
+enum EventPayloadWorkspaceTypeRaw {
+    Init,
+    Empty,
+    Focus,
+    Move,
+    Rename,
+    Urgent,
+    Reload,
+}
+
+#[derive(Debug, Clone)]
+pub enum EventPayloadWorkspaceType {
+    Init,
+    Empty,
+    Focus,
+    Move,
+    Rename,
+    Urgent,
+}
+
+impl fmt::Display for EventPayloadWorkspaceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Init => write!(f, "init"),
+            Self::Empty => write!(f, "empty"),
+            Self::Focus => write!(f, "focus"),
+            Self::Move => write!(f, "move"),
+            Self::Rename => write!(f, "rename"),
+            Self::Urgent => write!(f, "urgent"),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct EventPayloadWorkspaceChangeRaw {
+    output: String,
+    num: usize,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct EventPayloadWorkspaceRaw {
+    change: EventPayloadWorkspaceTypeRaw,
+    current: Option<EventPayloadWorkspaceChangeRaw>,
+}
+
+#[derive(Debug)]
+pub struct EventPayloadWorkspaceChange {
+    pub num: WorkspaceNumber,
+    pub output: OutputName,
+}
+
+impl TryFrom<EventPayloadWorkspaceChangeRaw> for EventPayloadWorkspaceChange {
+    type Error = Error;
+
+    fn try_from(value: EventPayloadWorkspaceChangeRaw) -> Result<Self, Self::Error> {
+        Ok(Self {
+            output: OutputName::try_new(value.output)?,
+            num: WorkspaceNumber::new(value.num),
+        })
+    }
+}
+
+impl fmt::Display for EventPayloadWorkspaceChange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} on {}", self.num, self.output)
+    }
+}
+
+#[derive(Debug)]
 pub struct EventPayloadWorkspace {
-    pub change: String,
+    pub change: EventPayloadWorkspaceType,
+    pub current: EventPayloadWorkspaceChange,
 }
 
 impl fmt::Display for EventPayloadWorkspace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "change: {}", self.change)
+        write!(f, "change: {} for {}", self.change, self.current)
     }
 }
 
@@ -301,11 +372,12 @@ pub(crate) struct SubscriptionPayload {
     pub(crate) error: Option<String>,
 }
 
-#[derive(Debug, strum::EnumDiscriminants, Clone)]
+#[derive(Debug, strum::EnumDiscriminants)]
 #[strum_discriminants(derive(Hash), name(EventPayloadType))]
 pub enum EventPayload {
     Output,
     Workspace(EventPayloadWorkspace),
+    Reload,
 }
 
 impl fmt::Display for EventPayload {
@@ -314,6 +386,9 @@ impl fmt::Display for EventPayload {
             Self::Output => write!(f, "Output"),
             Self::Workspace(ref event_payload_workspace) => {
                 write!(f, "Workspace({event_payload_workspace})")
+            }
+            Self::Reload => {
+                write!(f, "Reload")
             }
         }
     }
@@ -403,9 +478,69 @@ impl Response {
         if response_command >> 31_u8 == 1 {
             let response_command = response_command & !(1 << 31_u8);
             Ok(Self::SubscriptionEvent(match response_command {
-                0 => EventPayload::Workspace(
-                    serde_json::from_slice(&response).map_err(|err| Error::JsonParse(err))?,
-                ),
+                0 => {
+                    // the WORKSPACE event also carries a `reload` payload, which we will
+                    // handle separately
+                    let raw: EventPayloadWorkspaceRaw =
+                        serde_json::from_slice(&response).map_err(|err| Error::JsonParse(err))?;
+                    match raw.change {
+                        EventPayloadWorkspaceTypeRaw::Init => {
+                            EventPayload::Workspace(EventPayloadWorkspace {
+                                change: EventPayloadWorkspaceType::Init,
+                                current: raw
+                                    .current
+                                    .ok_or(Error::WorkspaceEventWithoutCurrent)?
+                                    .try_into()?,
+                            })
+                        }
+                        EventPayloadWorkspaceTypeRaw::Empty => {
+                            EventPayload::Workspace(EventPayloadWorkspace {
+                                change: EventPayloadWorkspaceType::Empty,
+                                current: raw
+                                    .current
+                                    .ok_or(Error::WorkspaceEventWithoutCurrent)?
+                                    .try_into()?,
+                            })
+                        }
+                        EventPayloadWorkspaceTypeRaw::Focus => {
+                            EventPayload::Workspace(EventPayloadWorkspace {
+                                change: EventPayloadWorkspaceType::Focus,
+                                current: raw
+                                    .current
+                                    .ok_or(Error::WorkspaceEventWithoutCurrent)?
+                                    .try_into()?,
+                            })
+                        }
+                        EventPayloadWorkspaceTypeRaw::Move => {
+                            EventPayload::Workspace(EventPayloadWorkspace {
+                                change: EventPayloadWorkspaceType::Move,
+                                current: raw
+                                    .current
+                                    .ok_or(Error::WorkspaceEventWithoutCurrent)?
+                                    .try_into()?,
+                            })
+                        }
+                        EventPayloadWorkspaceTypeRaw::Rename => {
+                            EventPayload::Workspace(EventPayloadWorkspace {
+                                change: EventPayloadWorkspaceType::Rename,
+                                current: raw
+                                    .current
+                                    .ok_or(Error::WorkspaceEventWithoutCurrent)?
+                                    .try_into()?,
+                            })
+                        }
+                        EventPayloadWorkspaceTypeRaw::Urgent => {
+                            EventPayload::Workspace(EventPayloadWorkspace {
+                                change: EventPayloadWorkspaceType::Urgent,
+                                current: raw
+                                    .current
+                                    .ok_or(Error::WorkspaceEventWithoutCurrent)?
+                                    .try_into()?,
+                            })
+                        }
+                        EventPayloadWorkspaceTypeRaw::Reload => EventPayload::Reload,
+                    }
+                }
                 1 => {
                     #[derive(Debug, serde::Deserialize)]
                     struct EventResponseOutput {

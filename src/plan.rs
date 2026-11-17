@@ -203,7 +203,7 @@ impl<'out> Plan<'_, 'out> {
 
                     commands.push(Command::MoveWorkspace {
                         num: workspace.num,
-                        from: from,
+                        from,
                         output: to,
                     });
                 }
@@ -297,6 +297,62 @@ impl<'out> Plan<'_, 'out> {
     }
 }
 
+pub(crate) fn get_assigned_output_for_workspace<'out>(
+    workspace: WorkspaceNumber,
+    setup: Setup,
+    laptop: Option<&'out Output>,
+    monitors: Option<&NonEmptyVec<&'out Output>>,
+) -> Result<&'out Output, Error> {
+    match setup {
+        Setup::LaptopOnly => laptop.ok_or(Error::NoLaptop),
+        Setup::LaptopRight | Setup::LaptopLeft => {
+            let monitors = monitors.ok_or(Error::NoMonitors)?;
+
+            Ok(match workspace.into_inner() {
+                7..=10 => laptop.ok_or(Error::NoLaptop)?,
+                i @ 1..=6 => match monitors.len() {
+                    1 => monitors.first(),
+                    2 => match i {
+                        1 => monitors.first(),
+                        2..=6 => monitors.get(1).expect("checked the range above"),
+                        _ => unreachable!("checked the range above"),
+                    },
+                    _ => {
+                        return Err(Error::MoreThanTwoMonitors);
+                    }
+                },
+                number => {
+                    return Err(Error::WorkspaceNumber { number });
+                }
+            })
+        }
+        Setup::MonitorOnly => {
+            let monitors = monitors.ok_or(Error::NoMonitors)?;
+
+            Ok(match workspace.into_inner() {
+                1..=5 => *monitors.first(),
+                6..=10 => match monitors.len() {
+                    1 => *monitors.first(),
+                    2 => monitors.get(1).expect("checked len above"),
+                    _ => {
+                        return Err(Error::MoreThanTwoMonitors);
+                    }
+                },
+                number => {
+                    return Err(Error::WorkspaceNumber { number });
+                }
+            })
+        }
+        Setup::Projector => Ok(match workspace.into_inner() {
+            0..=9 => laptop.ok_or(Error::NoLaptop)?,
+            10 => monitors.ok_or(Error::NoMonitors)?.first(),
+            number => {
+                return Err(Error::WorkspaceNumber { number });
+            }
+        }),
+    }
+}
+
 impl<'ws, 'out> Workstation<'out> {
     pub(crate) fn plan(
         &self,
@@ -308,7 +364,7 @@ impl<'ws, 'out> Workstation<'out> {
                 Setup::LaptopLeft | Setup::LaptopRight | Setup::MonitorOnly => {
                     Err(Error::NoMonitors)
                 }
-                Setup::LaptopOnly => Ok(Self::all_on_laptop(workspaces, laptop, None, setup)),
+                Setup::LaptopOnly => Ok(Self::all_on_laptop(workspaces, laptop, None, setup))?,
                 Setup::Projector => Err(Error::NoMonitorForProjector),
             },
             Self::MonitorOnly { ref monitors } => match setup {
@@ -330,7 +386,7 @@ impl<'ws, 'out> Workstation<'out> {
                     let max_output_height = self.max_output_height();
 
                     let workspace_settings =
-                        Self::distribute_workspaces(workspaces, laptop, monitors)?;
+                        Self::distribute_workspaces(workspaces, setup, laptop, monitors)?;
 
                     // keeping track of horizontal position, from left to right
                     let mut pos_x_cursor = output::PosX(0);
@@ -378,7 +434,7 @@ impl<'ws, 'out> Workstation<'out> {
                     let mut pos_x_cursor = output::PosX(0);
 
                     let workspace_settings =
-                        Self::distribute_workspaces(workspaces, laptop, monitors)?;
+                        Self::distribute_workspaces(workspaces, setup, laptop, monitors)?;
 
                     let output_settings = (monitors)
                         .into_iter()
@@ -421,7 +477,7 @@ impl<'ws, 'out> Workstation<'out> {
                     laptop,
                     Some(monitors),
                     setup,
-                )),
+                )?),
                 Setup::MonitorOnly => Self::all_on_monitor(
                     workspaces,
                     Some(laptop),
@@ -442,7 +498,7 @@ impl<'ws, 'out> Workstation<'out> {
         laptop: &'out Output,
         monitors: Option<&NonEmptyVec<&'out Output>>,
         setup: Setup,
-    ) -> Plan<'ws, 'out> {
+    ) -> Result<Plan<'ws, 'out>, Error> {
         let output_settings = {
             let mode = match laptop.state {
                 OutputState::Active {
@@ -473,22 +529,28 @@ impl<'ws, 'out> Workstation<'out> {
             .0
             .iter()
             .map(|workspace| {
-                if workspace.output.name == laptop.name {
-                    WorkspaceSetting::Unchanged { workspace }
+                let assigned_output = get_assigned_output_for_workspace(
+                    workspace.num,
+                    setup,
+                    Some(laptop),
+                    monitors,
+                )?;
+                if workspace.output.name == assigned_output.name {
+                    Ok(WorkspaceSetting::Unchanged { workspace })
                 } else {
-                    WorkspaceSetting::Change {
+                    Ok(WorkspaceSetting::Change {
                         workspace,
                         output: laptop,
-                    }
+                    })
                 }
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
-        Plan {
+        Ok(Plan {
             output_settings,
             workspace_settings,
             setup,
-        }
+        })
     }
 
     fn all_on_monitor(
@@ -548,29 +610,21 @@ impl<'ws, 'out> Workstation<'out> {
             workspace_settings: {
                 let mut v = vec![];
                 for workspace in &workspaces.0 {
-                    let target_output = match workspace.num.into_inner() {
-                        1..=5 => *monitors.first(),
-                        6..=10 => match monitors.len() {
-                            1 => *monitors.first(),
-                            2 => monitors.get(1).expect("checked len above"),
-                            _ => {
-                                return Err(Error::MoreThanTwoMonitors);
-                            }
-                        },
-                        number => {
-                            return Err(Error::WorkspaceNumber { number });
+                    let assigned_output = get_assigned_output_for_workspace(
+                        workspace.num,
+                        setup,
+                        laptop,
+                        Some(monitors),
+                    )?;
+
+                    v.push(if workspace.output.name == assigned_output.name {
+                        WorkspaceSetting::Unchanged { workspace }
+                    } else {
+                        WorkspaceSetting::Change {
+                            workspace,
+                            output: assigned_output,
                         }
-                    };
-                    {
-                        v.push(if workspace.output.name == target_output.name {
-                            WorkspaceSetting::Unchanged { workspace }
-                        } else {
-                            WorkspaceSetting::Change {
-                                workspace,
-                                output: target_output,
-                            }
-                        });
-                    }
+                    });
                 }
                 v
             },
@@ -586,19 +640,18 @@ impl<'ws, 'out> Workstation<'out> {
     ) -> Result<Plan<'ws, 'out>, Error> {
         let mut workspace_settings = vec![];
         for workspace in &workspaces.0 {
-            let target_output = match workspace.num.into_inner() {
-                0..=9 => laptop,
-                10 => monitor,
-                number => {
-                    return Err(Error::WorkspaceNumber { number });
-                }
-            };
-            workspace_settings.push(if workspace.output.name == target_output.name {
+            let assigned_output = get_assigned_output_for_workspace(
+                workspace.num,
+                setup,
+                Some(laptop),
+                Some(&NonEmptyVec::from_single(monitor)),
+            )?;
+            workspace_settings.push(if workspace.output.name == assigned_output.name {
                 WorkspaceSetting::Unchanged { workspace }
             } else {
                 WorkspaceSetting::Change {
                     workspace,
-                    output: target_output,
+                    output: assigned_output,
                 }
             });
         }
@@ -640,28 +693,18 @@ impl<'ws, 'out> Workstation<'out> {
 
     fn distribute_workspaces(
         workspaces: &'ws Workspaces<'out>,
+        setup: Setup,
         laptop: &'out Output,
         monitors: &NonEmptyVec<&'out Output>,
     ) -> Result<Vec<WorkspaceSetting<'ws, 'out>>, Error> {
         let mut v = vec![];
         for workspace in &workspaces.0 {
-            let target_output = match workspace.num.into_inner() {
-                7..=10 => laptop,
-                i @ 1..=6 => match monitors.len() {
-                    1 => monitors.first(),
-                    2 => match i {
-                        1 => monitors.first(),
-                        2..=6 => monitors.get(1).expect("checked the range above"),
-                        _ => unreachable!("checked the range above"),
-                    },
-                    _ => {
-                        return Err(Error::MoreThanTwoMonitors);
-                    }
-                },
-                number => {
-                    return Err(Error::WorkspaceNumber { number });
-                }
-            };
+            let target_output = get_assigned_output_for_workspace(
+                workspace.num,
+                setup,
+                Some(laptop),
+                Some(monitors),
+            )?;
             v.push(if workspace.output.name == target_output.name {
                 WorkspaceSetting::Unchanged { workspace }
             } else {

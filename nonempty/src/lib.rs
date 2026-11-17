@@ -49,6 +49,13 @@ impl<T> NonEmptyVec<T> {
         Some(Self { first, rest: from })
     }
 
+    pub fn from_single(from: T) -> Self {
+        Self {
+            first: from,
+            rest: Vec::new(),
+        }
+    }
+
     #[expect(
         clippy::len_without_is_empty,
         reason = "yeah clippy, but `empty()` does not *really* make sense here ;)"
