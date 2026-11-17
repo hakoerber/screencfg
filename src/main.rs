@@ -40,73 +40,6 @@ enum Setup {
 }
 
 #[expect(clippy::print_stdout, reason = "high level function")]
-async fn manage_new_workspace(
-    socket_path: &sway::SocketPath,
-    workspace: workspace::Number,
-    output: &OutputName,
-    custom_monitor_ordering: Option<&str>,
-    dry_run: bool,
-) -> Result<(), Error> {
-    let mut command_connection = sway::connect(socket_path).await?;
-
-    let outputs = Output::findall(&mut command_connection).await?;
-
-    let monitor_count = outputs
-        .iter()
-        .filter(|output| output.class == output::Class::Monitor)
-        .count();
-
-    let monitor_ordering = match custom_monitor_ordering.as_ref() {
-        Some(order) => MonitorOrdering::parse_from_str(order, monitor_count)?,
-        None => MonitorOrdering::Default,
-    };
-
-    let workstation = UnorderedWorkstation::from_outputs(&outputs)?.order(&monitor_ordering);
-
-    let assigned_output = match workstation {
-        Workstation::LaptopOnly { laptop } => plan::get_assigned_output_for_workspace(
-            workspace,
-            Setup::LaptopOnly,
-            Some(laptop),
-            None,
-        )?,
-        Workstation::MonitorOnly { monitors } => plan::get_assigned_output_for_workspace(
-            workspace,
-            Setup::MonitorOnly,
-            None,
-            Some(&monitors),
-        )?,
-        Workstation::Mixed { laptop, monitors } => {
-            plan::get_assigned_output_for_workspace(
-                workspace,
-                // specificy do not matter, the distribution is
-                // the same
-                Setup::LaptopLeft,
-                Some(laptop),
-                Some(&monitors),
-            )?
-        }
-    };
-
-    if assigned_output.name != *output {
-        if dry_run {
-            println!("would move workspace {workspace} from {output} to {assigned_output}");
-        } else {
-            command_connection
-                .command(sway::Command::MoveWorkspace {
-                    number: workspace.into(),
-                    output_name: (&assigned_output.name).into(),
-                })
-                .await?;
-        }
-    } else {
-        tracing::debug!("workspace already properly assigned");
-    }
-
-    Ok(())
-}
-
-#[expect(clippy::print_stdout, reason = "high level function")]
 async fn manage_screens(
     connection: &mut sway::Connection,
     debug: bool,
@@ -269,7 +202,7 @@ async fn run() -> Result<(), Error> {
             let mut command_connection = sway::connect(&socket_path).await?;
 
             let mut setter = async || {
-                manage_screens(
+                match manage_screens(
                     &mut command_connection,
                     args.debug,
                     watch_options.dry_run,
@@ -278,48 +211,30 @@ async fn run() -> Result<(), Error> {
                     watch_options.custom_monitor_ordering.as_deref(),
                 )
                 .await
+                {
+                    Ok(()) => Ok(()),
+                    Err(err) => match err {
+                        Error::WorkstationWithoutScreens => {
+                            eprintln!("no screens found, skipping setup");
+                            // It can happen that all screens are disconnected. in that case, we do *not* fail hard,
+                            // but just do nothing. If a screen is connected again, we can handle it.
+                            Ok(())
+                        }
+                        _ => Err(err),
+                    },
+                }
             };
 
             setter().await?;
 
-            let subscription = subscribe_connection
-                .subscribe(&[EventType::Output, EventType::Workspace])
-                .await?;
+            let subscription = subscribe_connection.subscribe(&[EventType::Output]).await?;
 
             let Err(err) = subscription
                 .start_event_listener::<_, Error>(Duration::from_millis(2000), async |event| {
                     eprintln!("received event from sway: {event}");
                     match event {
-                        sway::EventPayload::Output => {
-                            match setter().await {
-                                Ok(()) => (),
-                                Err(err) => match err {
-                                    Error::WorkstationWithoutScreens => {
-                                        eprintln!("no screens found, skipping setup");
-                                        // It can happen that all screens are disconnected. in that case, we do *not* fail hard,
-                                        // but just do nothing. If a screen is connected again, we can handle it.
-                                    }
-                                    _ => return Err(err),
-                                },
-                            }
-                        }
-                        sway::EventPayload::Workspace(payload) => match payload.change {
-                            sway::EventPayloadWorkspaceType::Init => {
-                                manage_new_workspace(
-                                    &socket_path,
-                                    payload.current.num.into(),
-                                    &payload.current.output.try_into()?,
-                                    watch_options.custom_monitor_ordering.as_deref(),
-                                    watch_options.dry_run,
-                                )
-                                .await?;
-                            }
-                            sway::EventPayloadWorkspaceType::Empty
-                            | sway::EventPayloadWorkspaceType::Focus
-                            | sway::EventPayloadWorkspaceType::Move
-                            | sway::EventPayloadWorkspaceType::Rename
-                            | sway::EventPayloadWorkspaceType::Urgent => (),
-                        },
+                        sway::EventPayload::Output => setter().await?,
+                        sway::EventPayload::Workspace(_payload) => (),
                         sway::EventPayload::Reload => (),
                     }
 
